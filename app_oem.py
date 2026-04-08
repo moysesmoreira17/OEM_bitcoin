@@ -12,7 +12,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="Terminal OEM v3.1", layout="wide")
 
-FRED_API_KEY = 'e13422aa86d75b68c58b6ced02d8fb31'
+FRED_API_KEY = st.secrets["FRED_API_KEY"]
 DATA_HALVING = datetime(2024, 4, 19)
 DATA_GENESIS = datetime(2009, 1, 3)
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
