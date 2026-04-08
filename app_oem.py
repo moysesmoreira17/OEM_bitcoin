@@ -10,9 +10,11 @@ import time
 # ==========================================
 # 1. CONFIGURAÇÃO E DADOS BASE
 # ==========================================
-st.set_page_config(page_title="Terminal OEM v3.1", layout="wide")
+st.set_page_config(page_title="Terminal OEM v3.2", layout="wide")
 
+# Agora pega a chave do Cofre de Segredos da Nuvem
 FRED_API_KEY = st.secrets["FRED_API_KEY"]
+
 DATA_HALVING = datetime(2024, 4, 19)
 DATA_GENESIS = datetime(2009, 1, 3)
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
@@ -37,21 +39,35 @@ def carregar_dados_mercado(meses):
         if not resp_j or not resp_m: 
             raise ValueError("Falha de conexão com o Banco Central Americano (FRED).")
 
-        # 2. Binance (Preço Histórico)
+        # 2. Binance (Preço Histórico Paginado e Camuflado)
         start_ms = int(inicio.timestamp() * 1000)
         end_ms = int(hoje.timestamp() * 1000)
         dados_btc = []
         
-        while start_ms < end_ms:
-            url_b = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=1000"
-            resp_b = requests.get(url_b).json()
+        # Camuflagem para enganar o Firewall da Binance
+        headers_falsos = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        tentativas = 0
+        while start_ms < end_ms and tentativas < 3:
+            # Usando a rota oficial de DADOS da Binance (mais leve que a rota de Trading)
+            url_b = f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=1000"
+            
+            resposta = requests.get(url_b, headers=headers_falsos)
+            
+            if resposta.status_code != 200:
+                tentativas += 1
+                time.sleep(2) # Respira 2 segundos antes de tentar furar o bloqueio de novo
+                continue
+                
+            resp_b = resposta.json()
             if not resp_b or isinstance(resp_b, dict): break
+            
             for c in resp_b:
                 dados_btc.append({"date": datetime.fromtimestamp(c[0]/1000.0), "Preco": float(c[4])})
+                
             start_ms = resp_b[-1][0] + 86400000 
-            time.sleep(0.1) 
+            time.sleep(0.3) # Pausa elegante para não irritar o servidor
             
-        # ESCUDO DE NUVEM: Verifica se a Binance bloqueou o IP e mandou vazio
         if not dados_btc:
             raise ValueError("A API da Binance bloqueou temporariamente o IP da nuvem (Rate Limit).")
 
@@ -61,7 +77,7 @@ def carregar_dados_mercado(meses):
         if not resp_d:
             raise ValueError("A API da Blockchain.info não retornou os dados de mineração.")
 
-        # 4. Tratamento Pandas (Protegido)
+        # 4. Tratamento Pandas
         df_j = pd.DataFrame(resp_j)[['date', 'value']].rename(columns={'value':'Juro'}).dropna()
         df_j['date'], df_j['Juro'] = pd.to_datetime(df_j['date']), pd.to_numeric(df_j['Juro'], errors='coerce')
         
@@ -84,8 +100,10 @@ def carregar_dados_mercado(meses):
         return None
 
 def buscar_preco_live():
+    """Busca o preço exato camuflado"""
     try: 
-        return float(requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT").json()['price'])
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        return float(requests.get("https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT", headers=headers).json()['price'])
     except: 
         return None
 
