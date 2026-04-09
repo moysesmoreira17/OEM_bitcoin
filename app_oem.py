@@ -115,13 +115,13 @@ def buscar_dxy_live():
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
-meses = st.sidebar.slider("Janela de Análise (Meses)", 12, 120, 48, step=1)
+meses = st.sidebar.slider("Janela de Análise (Meses)", 1, 120, 48, step=1)
 risco = st.sidebar.slider("Agressividade Dinâmica", 1.0, 5.0, 3.0, step=0.5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("💼 Seu Portfólio")
-caixa = st.sidebar.number_input("Saldo em Caixa (USD)", value=10000.0, step=100.0)
-saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", value=0.1000, step=0.0100, format="%.4f")
+caixa = st.sidebar.number_input("Saldo em Caixa (USD)", value=20.0, step=10.0)
+saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", value=0.0009, step=0.000100, format="%.4f")
 
 df_hist = carregar_dados_mercado(meses)
 
