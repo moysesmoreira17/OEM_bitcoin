@@ -19,9 +19,9 @@ DATA_HALVING = datetime(2024, 4, 19)
 DATA_GENESIS = datetime(2009, 1, 3)
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
 
-ALPHA = 2.8 
-BETA = 0.14
-DELTA = 0.7   
+ALPHA = 3.4
+BETA = 0.18
+DELTA = 0.5  
 
 @st.cache_data(ttl=3600)
 def carregar_dados_mercado(meses):
