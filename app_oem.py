@@ -12,14 +12,12 @@ import time
 # ==========================================
 st.set_page_config(page_title="Terminal Quantitativo OEM", layout="wide")
 
-# Chave protegida no Cofre da Nuvem
 FRED_API_KEY = st.secrets["FRED_API_KEY"]
 
 DATA_HALVING = datetime(2024, 4, 19)
 DATA_GENESIS = datetime(2009, 1, 3)
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
 
-# Cenário Wall Street (O Ponto de Equilíbrio)
 ALPHA = 3.4   
 BETA = 0.18   
 DELTA = 0.5   
@@ -31,7 +29,6 @@ def carregar_dados_mercado(meses):
         inicio = hoje - relativedelta(months=meses)
         inicio_str = inicio.strftime('%Y-%m-%d')
         
-        # 1. FRED (Juros e M2)
         url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFII10&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
         url_m = f"https://api.stlouisfed.org/fred/series/observations?series_id=WM2NS&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
         
@@ -40,7 +37,6 @@ def carregar_dados_mercado(meses):
         if not resp_j or not resp_m: 
             raise ValueError("Falha de conexão com o Banco Central Americano (FRED).")
 
-        # 2. Binance (Preço Histórico Paginado e Camuflado)
         start_ms = int(inicio.timestamp() * 1000)
         end_ms = int(hoje.timestamp() * 1000)
         dados_btc = []
@@ -69,13 +65,11 @@ def carregar_dados_mercado(meses):
         if not dados_btc:
             raise ValueError("A API da Binance bloqueou temporariamente o IP da nuvem (Rate Limit).")
 
-        # 3. Blockchain (Dificuldade)
         url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses}months&format=json&sampled=true"
         resp_d = requests.get(url_d).json().get('values', [])
         if not resp_d:
             raise ValueError("A API da Blockchain.info não retornou os dados de mineração.")
 
-        # 4. Tratamento Pandas
         df_j = pd.DataFrame(resp_j)[['date', 'value']].rename(columns={'value':'Juro'}).dropna()
         df_j['date'], df_j['Juro'] = pd.to_datetime(df_j['date']), pd.to_numeric(df_j['Juro'], errors='coerce')
         
@@ -110,8 +104,8 @@ def buscar_preco_live():
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
 meses = st.sidebar.slider("Janela de Análise (Meses)", 12, 120, 48, step=1)
+risco = st.sidebar.slider("Agressividade Dinâmica", 1.0, 5.0, 3.0, step=0.5)
 
-# Gestão de Banca (Portfólio Real do Usuário)
 st.sidebar.markdown("---")
 st.sidebar.subheader("💼 Seu Portfólio")
 caixa = st.sidebar.number_input("Saldo em Caixa (USD)", value=10000.0, step=100.0)
@@ -120,7 +114,6 @@ saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", value=0.1000, step
 df_hist = carregar_dados_mercado(meses)
 
 if df_hist is not None:
-    # --- MOTOR OEM ---
     dados_oem = []
     for d, r in df_hist.iterrows():
         anos_g = (d - DATA_GENESIS).days / 365.25
@@ -138,7 +131,7 @@ if df_hist is not None:
     df_plot = pd.DataFrame(dados_oem)
 
     # ==========================================
-    # ABA 1: LIVE (COM GESTÃO DE BANCA)
+    # ABA 1: LIVE (COM FUNÇÃO CONTÍNUA)
     # ==========================================
     if aba_selecionada == "Monitoramento Live":
         st.title("📡 Terminal OEM - Tempo Real")
@@ -149,35 +142,30 @@ if df_hist is not None:
         u = df_plot.iloc[-1]
         delta = (u['OEM'] - u['Mercado']) / u['OEM']
         
-        # --- Lógica de Tranches (Sinais de Execução Real) ---
+        # --- CÁLCULO DINÂMICO E CONTÍNUO ---
         acao_cor = "white"
-        if delta > 0.15:
-            status = "🟢 COMPRA AGRESSIVA"
-            recomendacao = f"Compre US$ {caixa * 0.25:,.2f} (25% do Caixa)"
+        
+        if delta > 0.02:
+            # COMPRA: % atrelada ao tamanho do Delta e limitada a 90%
+            porcentagem = min(0.90, delta * (risco / 2))
+            status = "🟢 COMPRA ELASTICA"
+            recomendacao = f"Compre US$ {caixa * porcentagem:,.2f} ({porcentagem*100:.1f}% do Caixa)"
             acao_cor = "#00FF00"
-        elif delta > 0.05:
-            status = "🟡 COMPRA MODERADA"
-            recomendacao = f"Compre US$ {caixa * 0.10:,.2f} (10% do Caixa)"
-            acao_cor = "#FFD700"
-        elif delta > -0.05:
-            status = "🔵 DCA (MANUTENÇÃO)"
-            recomendacao = f"Compre US$ {caixa * 0.02:,.2f} (2% do Caixa)"
-            acao_cor = "#00BFFF"
-        elif delta < -0.30:
-            status = "🔴 DESPEJO (BOLHA SEVERA)"
-            qtd_venda = saldo_btc * 0.50
+            
+        elif delta < -0.10:
+            # VENDA: % atrelada ao tamanho do Delta (abs converte negativo pra positivo)
+            porcentagem = min(0.90, abs(delta) * (risco / 2))
+            status = "🔴 VENDA ELASTICA"
+            qtd_venda = saldo_btc * porcentagem
             recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
             acao_cor = "#FF0000"
-        elif delta < -0.15:
-            status = "🟠 REALIZAR LUCRO"
-            qtd_venda = saldo_btc * 0.15
-            recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
-            acao_cor = "#FF8C00"
+            
         else:
-            status = "⚪ AGUARDAR"
-            recomendacao = "Nenhuma ação recomendada no momento."
+            # ZONA NEUTRA
+            status = "🔵 DCA (MANUTENÇÃO)"
+            recomendacao = f"Compre apenas US$ {caixa * 0.01:,.2f} (1% do Caixa)"
+            acao_cor = "#00BFFF"
 
-        # Painel Superior
         c1, c2, c3 = st.columns(3)
         c1.metric("Preço Justo (OEM)", f"US$ {u['OEM']:,.0f}")
         c2.metric("Preço Mercado (Binance)", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta)")
@@ -186,7 +174,6 @@ if df_hist is not None:
             st.markdown(f"<h3 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h3>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 18px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
-        # Gráfico Live
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)))
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')))
@@ -194,20 +181,18 @@ if df_hist is not None:
         st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
-    # ABA 2: BACKTEST (PROVA MATEMÁTICA)
+    # ABA 2: BACKTEST (COM FUNÇÃO CONTÍNUA)
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses** com aportes dinâmicos (Tranches).")
+        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses** usando alocação dinâmica elástica.")
         
         capital_inicial = 10000.0
         
-        # --- BnH ---
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
         qtd_btc_bnh = capital_inicial / preco_compra_bnh
         df_plot['Patrimonio_BnH'] = df_plot['Mercado'] * qtd_btc_bnh
         
-        # --- OEM ---
         caixa_oem = capital_inicial
         btc_oem = 0.0
         patrimonio_hist_oem = []
@@ -217,20 +202,26 @@ if df_hist is not None:
             p_justo = row['OEM']
             delta = (p_justo - p_mercado) / p_justo
             
+            # --- Regras Dinâmicas no Backtest ---
             if caixa_oem > 10: 
-                if delta > 0.15: valor_compra = caixa_oem * 0.25 
-                elif delta > 0.05: valor_compra = caixa_oem * 0.10 
-                elif delta > -0.05: valor_compra = caixa_oem * 0.02 
-                else: valor_compra = 0
+                if delta > 0.02:
+                    porc_compra = min(0.90, delta * (risco / 2))
+                    valor_compra = caixa_oem * porc_compra
+                elif delta > -0.10:
+                    valor_compra = caixa_oem * 0.01
+                else:
+                    valor_compra = 0
                 
                 if valor_compra > 0:
                     btc_oem += valor_compra / p_mercado
                     caixa_oem -= valor_compra
                 
             if btc_oem > 0:
-                if delta < -0.30: qtd_vender = btc_oem * 0.50 
-                elif delta < -0.15: qtd_vender = btc_oem * 0.15 
-                else: qtd_vender = 0
+                if delta <= -0.10:
+                    porc_venda = min(0.90, abs(delta) * (risco / 2))
+                    qtd_vender = btc_oem * porc_venda
+                else:
+                    qtd_vender = 0
                     
                 if qtd_vender > 0:
                     valor_venda = qtd_vender * p_mercado
