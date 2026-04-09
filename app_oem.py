@@ -10,18 +10,19 @@ import time
 # ==========================================
 # 1. CONFIGURAÇÃO E DADOS BASE
 # ==========================================
-st.set_page_config(page_title="Terminal OEM v3.2", layout="wide")
+st.set_page_config(page_title="Terminal Quantitativo OEM", layout="wide")
 
-# Agora pega a chave do Cofre de Segredos da Nuvem
+# Chave protegida no Cofre da Nuvem
 FRED_API_KEY = st.secrets["FRED_API_KEY"]
 
 DATA_HALVING = datetime(2024, 4, 19)
 DATA_GENESIS = datetime(2009, 1, 3)
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
 
-ALPHA = 3.4
-BETA = 0.18
-DELTA = 0.5  
+# Cenário Wall Street (O Ponto de Equilíbrio)
+ALPHA = 3.4   
+BETA = 0.18   
+DELTA = 0.5   
 
 @st.cache_data(ttl=3600)
 def carregar_dados_mercado(meses):
@@ -44,19 +45,16 @@ def carregar_dados_mercado(meses):
         end_ms = int(hoje.timestamp() * 1000)
         dados_btc = []
         
-        # Camuflagem para enganar o Firewall da Binance
         headers_falsos = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
         tentativas = 0
         while start_ms < end_ms and tentativas < 3:
-            # Usando a rota oficial de DADOS da Binance (mais leve que a rota de Trading)
             url_b = f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=1000"
-            
             resposta = requests.get(url_b, headers=headers_falsos)
             
             if resposta.status_code != 200:
                 tentativas += 1
-                time.sleep(2) # Respira 2 segundos antes de tentar furar o bloqueio de novo
+                time.sleep(2)
                 continue
                 
             resp_b = resposta.json()
@@ -66,7 +64,7 @@ def carregar_dados_mercado(meses):
                 dados_btc.append({"date": datetime.fromtimestamp(c[0]/1000.0), "Preco": float(c[4])})
                 
             start_ms = resp_b[-1][0] + 86400000 
-            time.sleep(0.3) # Pausa elegante para não irritar o servidor
+            time.sleep(0.3) 
             
         if not dados_btc:
             raise ValueError("A API da Binance bloqueou temporariamente o IP da nuvem (Rate Limit).")
@@ -100,7 +98,6 @@ def carregar_dados_mercado(meses):
         return None
 
 def buscar_preco_live():
-    """Busca o preço exato camuflado"""
     try: 
         headers = {'User-Agent': 'Mozilla/5.0'}
         return float(requests.get("https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT", headers=headers).json()['price'])
@@ -113,6 +110,12 @@ def buscar_preco_live():
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
 meses = st.sidebar.slider("Janela de Análise (Meses)", 12, 120, 48, step=1)
+
+# Gestão de Banca (Portfólio Real do Usuário)
+st.sidebar.markdown("---")
+st.sidebar.subheader("💼 Seu Portfólio")
+caixa = st.sidebar.number_input("Saldo em Caixa (USD)", value=10000.0, step=100.0)
+saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", value=0.1000, step=0.0100, format="%.4f")
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -134,46 +137,77 @@ if df_hist is not None:
     
     df_plot = pd.DataFrame(dados_oem)
 
-    # ABA 1: LIVE
+    # ==========================================
+    # ABA 1: LIVE (COM GESTÃO DE BANCA)
+    # ==========================================
     if aba_selecionada == "Monitoramento Live":
         st.title("📡 Terminal OEM - Tempo Real")
-        caixa = st.sidebar.number_input("Caixa (USD)", value=10000.0)
-        risco = st.sidebar.slider("Agressividade", 1, 5, 3)
         
         preco_agora = buscar_preco_live()
         if preco_agora: df_plot.iloc[-1, df_plot.columns.get_loc('Mercado')] = preco_agora
 
         u = df_plot.iloc[-1]
         delta = (u['OEM'] - u['Mercado']) / u['OEM']
-        aporte = caixa * max(0, delta * (risco/5))
+        
+        # --- Lógica de Tranches (Sinais de Execução Real) ---
+        acao_cor = "white"
+        if delta > 0.15:
+            status = "🟢 COMPRA AGRESSIVA"
+            recomendacao = f"Compre US$ {caixa * 0.25:,.2f} (25% do Caixa)"
+            acao_cor = "#00FF00"
+        elif delta > 0.05:
+            status = "🟡 COMPRA MODERADA"
+            recomendacao = f"Compre US$ {caixa * 0.10:,.2f} (10% do Caixa)"
+            acao_cor = "#FFD700"
+        elif delta > -0.05:
+            status = "🔵 DCA (MANUTENÇÃO)"
+            recomendacao = f"Compre US$ {caixa * 0.02:,.2f} (2% do Caixa)"
+            acao_cor = "#00BFFF"
+        elif delta < -0.30:
+            status = "🔴 DESPEJO (BOLHA SEVERA)"
+            qtd_venda = saldo_btc * 0.50
+            recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
+            acao_cor = "#FF0000"
+        elif delta < -0.15:
+            status = "🟠 REALIZAR LUCRO"
+            qtd_venda = saldo_btc * 0.15
+            recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
+            acao_cor = "#FF8C00"
+        else:
+            status = "⚪ AGUARDAR"
+            recomendacao = "Nenhuma ação recomendada no momento."
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("OEM (Valor Justo)", f"US$ {u['OEM']:,.0f}")
-        c2.metric("Preço Mercado", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}%")
+        # Painel Superior
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Preço Justo (OEM)", f"US$ {u['OEM']:,.0f}")
+        c2.metric("Preço Mercado (Binance)", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta)")
+        
         with c3:
-            if delta > 0.10: st.success("🟢 COMPRA FORTE")
-            elif delta > 0.0: st.warning("🟡 ACUMULAR")
-            elif delta > -0.10: st.info("🔵 DCA (MANUTENÇÃO)")
-            else: st.error("🔴 BOLHA / REALIZAR LUCRO")
-        c4.metric("Aporte Sugerido", f"US$ {aporte:,.2f}")
+            st.markdown(f"<h3 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h3>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align: center; font-size: 18px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
+        # Gráfico Live
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)))
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')))
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0))
         st.plotly_chart(fig, use_container_width=True)
 
-    # ABA 2: BACKTEST
+    # ==========================================
+    # ABA 2: BACKTEST (PROVA MATEMÁTICA)
+    # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses** com aportes dinâmicos.")
+        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses** com aportes dinâmicos (Tranches).")
         
         capital_inicial = 10000.0
         
+        # --- BnH ---
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
         qtd_btc_bnh = capital_inicial / preco_compra_bnh
         df_plot['Patrimonio_BnH'] = df_plot['Mercado'] * qtd_btc_bnh
         
+        # --- OEM ---
         caixa_oem = capital_inicial
         btc_oem = 0.0
         patrimonio_hist_oem = []
