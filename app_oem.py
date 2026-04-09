@@ -112,7 +112,7 @@ def buscar_preco_live():
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
-meses = st.sidebar.slider("Janela de Análise (Meses)", 12, 120, 48, step=12)
+meses = st.sidebar.slider("Janela de Análise (Meses)", 12, 120, 48, step=1)
 
 df_hist = carregar_dados_mercado(meses)
 
