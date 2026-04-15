@@ -230,7 +230,7 @@ if df_hist is not None:
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando início há **{meses} meses** com capital de **US$ 1.000**.")
+        st.markdown(f"Simulando início há **{meses} meses** com capital de **US$ 100.00**.")
         
         capital_inicial = 100.0 # Aterrado para a realidade solicitada
         
