@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots # <-- ADICIONADO PARA EIXO DUPLO
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import requests
@@ -85,7 +86,7 @@ def carregar_dados_mercado(meses):
         df_diff = pd.DataFrame([{"date": datetime.fromtimestamp(p['x']), "Diff": p['y']/1e12} for p in resp_d])
         df_diff['date'] = pd.to_datetime(df_diff['date'])
 
-        # Juntando tudo (agora com o DXY)
+        # Juntando tudo
         df_final = df_j.set_index('date').join(
                    df_m.set_index('date'), how='outer').join(
                    df_dxy, how='outer').join(
@@ -108,7 +109,7 @@ def buscar_dxy_live():
     try:
         return float(yf.Ticker("DX-Y.NYB").history(period="1d")['Close'].iloc[-1])
     except:
-        return 100.0 # Fallback caso a API falhe
+        return 100.0 # Fallback
 
 # ==========================================
 # 2. INTERFACE E PROCESSAMENTO
@@ -130,7 +131,6 @@ if df_hist is not None:
     for d, r in df_hist.iterrows():
         anos_g = (d - DATA_GENESIS).days / 365.25
         
-        # O Fator DXY atua como a lupa em tempo real sobre a liquidez atrasada
         dxy_atual = r['DXY'] if not pd.isna(r['DXY']) else 100.0
         fator_dxy = 100.0 / max(50.0, dxy_atual) 
         
@@ -143,12 +143,12 @@ if df_hist is not None:
         f_esc = 1 + (0.02 * max(0, (d - DATA_PICO_EXCHANGES).days/365.25)) 
         den = max(0.1, r['Juro'] + DELTA)
         
-        # A nova equação com o Sensor Real Time
         p_oem = ALPHA * (liq_e/den) * f_ciclo * r['Diff'] * f_esc * fator_dxy
         
         dados_oem.append({"Data": d, "OEM": p_oem, "Mercado": r['Preco'], "DXY": dxy_atual})
     
     df_plot = pd.DataFrame(dados_oem)
+    df_plot['1_DXY'] = 1 / df_plot['DXY'] # <-- ADICIONADO: Cálculo do 1/DXY para o histórico
 
     # ==========================================
     # ABA 1: LIVE
@@ -158,13 +158,14 @@ if df_hist is not None:
         
         preco_agora = buscar_preco_live()
         dxy_agora = buscar_dxy_live()
+        inverso_dxy_agora = 1 / dxy_agora # <-- ADICIONADO: Cálculo live
         
         if preco_agora: df_plot.iloc[-1, df_plot.columns.get_loc('Mercado')] = preco_agora
         df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
+        df_plot.iloc[-1, df_plot.columns.get_loc('1_DXY')] = inverso_dxy_agora
 
         u = df_plot.iloc[-1]
         
-        # Recálculo do OEM da última linha com o DXY dos últimos segundos
         fator_dxy_live = 100.0 / max(50.0, dxy_agora)
         oem_corrigido = u['OEM'] * (fator_dxy_live / (100.0 / max(50.0, u['DXY']))) if u['DXY'] != dxy_agora else u['OEM']
         
@@ -191,18 +192,27 @@ if df_hist is not None:
         c1.metric("Preço Justo (OEM)", f"US$ {oem_corrigido:,.0f}")
         c2.metric("Preço Mercado", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta)")
         
-        # Novo Termômetro DXY
-        dxy_cor = "normal" if dxy_agora < 104 else "inverse" # Vermelho se dólar estiver muito forte (ruim pro BTC)
-        c3.metric("Liquidez Global (DXY)", f"{dxy_agora:.2f} pts", delta_color=dxy_cor)
+        # <-- ADICIONADO: Métrica atualizada para mostrar 1/DXY em destaque
+        c3.metric("Força Inversa (1/DXY)", f"{inverso_dxy_agora:.5f}", f"DXY Base: {dxy_agora:.2f} pts", delta_color="off")
         
         with c4:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)))
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')))
-        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0))
+        # <-- ADICIONADO: Gráfico com duplo eixo (Subplots)
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Eixo Y Primário (Preços)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)), secondary_y=False)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')), secondary_y=False)
+        
+        # Eixo Y Secundário (1/DXY)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Força Inversa)', line=dict(color='#00BFFF', width=1.5, dash='dot'), opacity=0.6), secondary_y=True)
+        
+        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
+        fig.update_yaxes(title_text="Preço (USD)", secondary_y=False)
+        fig.update_yaxes(title_text="Índice 1/DXY", secondary_y=True, showgrid=False) # Esconde grid do DXY pra não poluir
+        
         st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
