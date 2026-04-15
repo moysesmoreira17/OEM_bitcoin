@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # <-- ADICIONADO PARA EIXO DUPLO
+from plotly.subplots import make_subplots
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import requests
@@ -29,7 +29,9 @@ def carregar_dados_mercado(meses):
     try:
         hoje = datetime.now()
         inicio = hoje - relativedelta(months=meses)
-        inicio_str = inicio.strftime('%Y-%m-%d')
+        # Adiciona margem de 10 dias extras para o cálculo perfeito da derivada móvel no início do gráfico
+        inicio_query = inicio - relativedelta(days=10) 
+        inicio_str = inicio_query.strftime('%Y-%m-%d')
         
         # 1. FRED
         url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFII10&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
@@ -38,7 +40,7 @@ def carregar_dados_mercado(meses):
         resp_m = requests.get(url_m).json().get('observations', [])
 
         # 2. Binance
-        start_ms = int(inicio.timestamp() * 1000)
+        start_ms = int(inicio_query.timestamp() * 1000)
         end_ms = int(hoje.timestamp() * 1000)
         dados_btc = []
         headers_falsos = {'User-Agent': 'Mozilla/5.0'}
@@ -59,7 +61,7 @@ def carregar_dados_mercado(meses):
             time.sleep(0.3) 
 
         # 3. Blockchain (Dificuldade)
-        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses}months&format=json&sampled=true"
+        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+1}months&format=json&sampled=true"
         resp_d = requests.get(url_d).json().get('values', [])
 
         # 4. Yahoo Finance (DXY - Índice do Dólar em Tempo Real)
@@ -69,7 +71,7 @@ def carregar_dados_mercado(meses):
             df_dxy = pd.DataFrame({'DXY': dxy_raw['Close']})
             df_dxy.index.name = 'date'
         except Exception as e:
-            st.warning(f"Aviso: Não foi possível carregar o DXY em tempo real. Usando linha base 100. Erro: {e}")
+            st.warning(f"Aviso: Não foi possível carregar o DXY em tempo real. Usando linha base 100.")
             df_dxy = pd.DataFrame(columns=['DXY'])
             df_dxy.index.name = 'date'
 
@@ -93,6 +95,8 @@ def carregar_dados_mercado(meses):
                    df_btc.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer').ffill().dropna()
         
+        # Filtra para manter estritamente o período solicitado (remove os dias extras do pré-cálculo)
+        df_final = df_final[df_final.index >= pd.to_datetime(inicio_str)]
         return df_final
     except Exception as e:
         st.error(f"🛑 Interceptação de Segurança: {e}")
@@ -148,7 +152,12 @@ if df_hist is not None:
         dados_oem.append({"Data": d, "OEM": p_oem, "Mercado": r['Preco'], "DXY": dxy_atual})
     
     df_plot = pd.DataFrame(dados_oem)
-    df_plot['1_DXY'] = 1 / df_plot['DXY'] # <-- ADICIONADO: Cálculo do 1/DXY para o histórico
+    df_plot['1_DXY'] = 1 / df_plot['DXY']
+    
+    # ----------------------------------------------------
+    # NOVA LÓGICA: DERIVADA DO BITCOIN (CINEMÁTICA 7 DIAS)
+    # ----------------------------------------------------
+    df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=7).fillna(0)
 
     # ==========================================
     # ABA 1: LIVE
@@ -158,7 +167,7 @@ if df_hist is not None:
         
         preco_agora = buscar_preco_live()
         dxy_agora = buscar_dxy_live()
-        inverso_dxy_agora = 1 / dxy_agora # <-- ADICIONADO: Cálculo live
+        inverso_dxy_agora = 1 / dxy_agora 
         
         if preco_agora: df_plot.iloc[-1, df_plot.columns.get_loc('Mercado')] = preco_agora
         df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
@@ -170,57 +179,59 @@ if df_hist is not None:
         oem_corrigido = u['OEM'] * (fator_dxy_live / (100.0 / max(50.0, u['DXY']))) if u['DXY'] != dxy_agora else u['OEM']
         
         delta = (oem_corrigido - u['Mercado']) / oem_corrigido
+        derivada_live = u['dBTC_dt']
+        sensibilidade_live = 5
         
         acao_cor = "white"
         if delta > 0.02:
-            porcentagem = min(0.90, delta * (risco / 2))
-            status = "🟢 COMPRA ELASTICA"
+            modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade_live), 2.0))
+            forca_compra = (delta * (risco / 2)) * modulador_compra
+            porcentagem = min(0.90, forca_compra)
+            
+            status = "🟢 COMPRA ELASTICA (Macro Ajustada)"
             recomendacao = f"Compre US$ {caixa * porcentagem:,.2f} ({porcentagem*100:.1f}% do Caixa)"
             acao_cor = "#00FF00"
+            
         elif delta < -0.10:
-            porcentagem = min(0.90, abs(delta) * (risco / 2))
-            status = "🔴 VENDA ELASTICA"
+            modulador_venda = max(0.2, min(1 + (derivada_live * sensibilidade_live), 2.0))
+            forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
+            porcentagem = min(0.90, forca_venda)
+            
+            status = "🔴 VENDA ELASTICA (Macro Ajustada)"
             qtd_venda = saldo_btc * porcentagem
             recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
             acao_cor = "#FF0000"
         else:
-            status = "🔵 DCA (MANUTENÇÃO)"
+            status = "🔵 DCA PASSIVO"
             recomendacao = f"Compre apenas US$ {caixa * 0.01:,.2f} (1% do Caixa)"
             acao_cor = "#00BFFF"
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Preço Justo (OEM)", f"US$ {oem_corrigido:,.0f}")
-        c2.metric("Preço Mercado", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta)")
-        
-        # <-- ADICIONADO: Métrica atualizada para mostrar 1/DXY em destaque
-        c3.metric("Força Inversa (1/DXY)", f"{inverso_dxy_agora:.5f}", f"DXY Base: {dxy_agora:.2f} pts", delta_color="off")
+        c2.metric("Preço Mercado", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
+        c3.metric("Força Inversa (1/DXY)", f"{inverso_dxy_agora:.5f}", f"Cinemática 7d: {derivada_live*100:.1f}%", delta_color="off")
         
         with c4:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
-        # <-- ADICIONADO: Gráfico com duplo eixo (Subplots)
         fig = make_subplots(specs=[[{"secondary_y": True}]])
-        
-        # Eixo Y Primário (Preços)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)), secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')), secondary_y=False)
-        
-        # Eixo Y Secundário (1/DXY)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Força Inversa)', line=dict(color='#00BFFF', width=1.5, dash='dot'), opacity=0.6), secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY', line=dict(color='#00BFFF', width=1.5, dash='dot'), opacity=0.6), secondary_y=True)
         
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço (USD)", secondary_y=False)
-        fig.update_yaxes(title_text="Índice 1/DXY", secondary_y=True, showgrid=False) # Esconde grid do DXY pra não poluir
+        fig.update_yaxes(title_text="Índice 1/DXY", secondary_y=True, showgrid=False) 
         
         st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
-    # ABA 2: BACKTEST
+    # ABA 2: BACKTEST INSTITUCIONAL
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses** usando alocação dinâmica elástica.")
+        st.markdown(f"Simulando investimento de **US$ 10.000** ao longo de **{meses} meses**. *Com Modulação Macro OEM (Matriz 4 Quadrantes).*")
         
         capital_inicial = 10000.0
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
@@ -231,24 +242,35 @@ if df_hist is not None:
         btc_oem = 0.0
         patrimonio_hist_oem = []
         
-        # Rastreadores visuais para os momentos de compra e venda
         compras_x, compras_y = [], []
         vendas_x, vendas_y = [], []
+        
+        SENSIBILIDADE = 5 # Peso da derivada de 7 dias
 
         for _, row in df_plot.iterrows():
             p_mercado = row['Mercado']
             p_justo = row['OEM']
             data_atual = row['Data']
+            derivada_btc = row['dBTC_dt']
             delta = (p_justo - p_mercado) / p_justo
             
-            # Dinâmica de Compra
+            # --- 1. SINAIS PUROS DA BÚSSOLA OEM ---
+            if delta > 0.02: 
+                compras_x.append(data_atual)
+                compras_y.append(p_mercado)
+            elif delta <= -0.10: 
+                vendas_x.append(data_atual)
+                vendas_y.append(p_mercado)
+                
+            # --- 2. EXECUÇÃO FINANCEIRA COM ACELERADOR/FREIO ---
             if caixa_oem > 10: 
                 if delta > 0.02: 
-                    valor_compra = caixa_oem * min(0.90, delta * (risco / 2))
-                    compras_x.append(data_atual)
-                    compras_y.append(p_mercado)
+                    # Matriz Quadrante 1 e 2: Controlando a Faca Caindo e o FOMO
+                    modulador_compra = max(0.2, min(1 - (derivada_btc * SENSIBILIDADE), 2.0))
+                    forca_compra = (delta * (risco / 2)) * modulador_compra
+                    valor_compra = caixa_oem * min(0.90, forca_compra)
                 elif delta > -0.10: 
-                    valor_compra = caixa_oem * 0.01 # DCA passivo (não plota para não poluir o gráfico)
+                    valor_compra = caixa_oem * 0.01 # DCA 1% cego à macro
                 else: 
                     valor_compra = 0
                 
@@ -256,12 +278,12 @@ if df_hist is not None:
                     btc_oem += valor_compra / p_mercado
                     caixa_oem -= valor_compra
                 
-            # Dinâmica de Venda
             if btc_oem > 0:
                 if delta <= -0.10: 
-                    qtd_vender = btc_oem * min(0.90, abs(delta) * (risco / 2))
-                    vendas_x.append(data_atual)
-                    vendas_y.append(p_mercado)
+                    # Matriz Quadrante 3 e 4: Desovando no topo ou segurando a correção
+                    modulador_venda = max(0.2, min(1 + (derivada_btc * SENSIBILIDADE), 2.0))
+                    forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
+                    qtd_vender = btc_oem * min(0.90, forca_venda)
                 else: 
                     qtd_vender = 0
                     
@@ -277,7 +299,6 @@ if df_hist is not None:
         dd_bnh = ((df_plot['Patrimonio_BnH'] / df_plot['Patrimonio_BnH'].cummax()) - 1).min() * 100
         dd_oem = ((df_plot['Patrimonio_OEM'] / df_plot['Patrimonio_OEM'].cummax()) - 1).min() * 100
 
-        # --- Métricas ---
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Estratégia Buy & Hold")
@@ -289,31 +310,15 @@ if df_hist is not None:
             st.metric("Drawdown Máximo (Risco)", f"{dd_oem:.1f}%", delta_color="inverse")
 
         st.markdown("---")
-        
-        # --- Gráfico 1: Ações no Gráfico de Preço (NOVO) ---
-        st.subheader("🎯 Mapeamento de Entradas e Saídas (Gatilhos OEM)")
+        st.subheader("🎯 Bússola Estrutural (Independente do Caixa)")
         fig_sinais = go.Figure()
-        
-        # Linhas de Base
         fig_sinais.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC', line=dict(color='white', width=1.5)))
         fig_sinais.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=2)))
-        
-        # Sinais de Compra Elástica (Triângulos Verdes para cima)
-        fig_sinais.add_trace(go.Scatter(
-            x=compras_x, y=compras_y, mode='markers', name='Compra Elástica',
-            marker=dict(symbol='triangle-up', size=10, color='#00FF00', line=dict(width=1, color='black'))
-        ))
-        
-        # Sinais de Venda Elástica (Triângulos Vermelhos para baixo)
-        fig_sinais.add_trace(go.Scatter(
-            x=vendas_x, y=vendas_y, mode='markers', name='Venda Elástica',
-            marker=dict(symbol='triangle-down', size=10, color='#FF0000', line=dict(width=1, color='black'))
-        ))
-        
+        fig_sinais.add_trace(go.Scatter(x=compras_x, y=compras_y, mode='markers', name='Sinal Compra', marker=dict(symbol='triangle-up', size=8, color='#00FF00', line=dict(width=1, color='black'))))
+        fig_sinais.add_trace(go.Scatter(x=vendas_x, y=vendas_y, mode='markers', name='Sinal Venda', marker=dict(symbol='triangle-down', size=8, color='#FF0000', line=dict(width=1, color='black'))))
         fig_sinais.update_layout(template="plotly_dark", yaxis_title="Preço (USD)", hovermode="x unified", height=500)
         st.plotly_chart(fig_sinais, use_container_width=True)
 
-        # --- Gráfico 2: Evolução Patrimonial (Mantido) ---
         st.subheader("📈 Crescimento de Patrimônio Comparado")
         fig_bt = go.Figure()
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_BnH'], name='Buy & Hold', line=dict(color='#888888', dash='dash')))
