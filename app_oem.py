@@ -230,24 +230,40 @@ if df_hist is not None:
         caixa_oem = capital_inicial
         btc_oem = 0.0
         patrimonio_hist_oem = []
+        
+        # Rastreadores visuais para os momentos de compra e venda
+        compras_x, compras_y = [], []
+        vendas_x, vendas_y = [], []
 
         for _, row in df_plot.iterrows():
             p_mercado = row['Mercado']
             p_justo = row['OEM']
+            data_atual = row['Data']
             delta = (p_justo - p_mercado) / p_justo
             
+            # Dinâmica de Compra
             if caixa_oem > 10: 
-                if delta > 0.02: valor_compra = caixa_oem * min(0.90, delta * (risco / 2))
-                elif delta > -0.10: valor_compra = caixa_oem * 0.01
-                else: valor_compra = 0
+                if delta > 0.02: 
+                    valor_compra = caixa_oem * min(0.90, delta * (risco / 2))
+                    compras_x.append(data_atual)
+                    compras_y.append(p_mercado)
+                elif delta > -0.10: 
+                    valor_compra = caixa_oem * 0.01 # DCA passivo (não plota para não poluir o gráfico)
+                else: 
+                    valor_compra = 0
                 
                 if valor_compra > 0:
                     btc_oem += valor_compra / p_mercado
                     caixa_oem -= valor_compra
                 
+            # Dinâmica de Venda
             if btc_oem > 0:
-                if delta <= -0.10: qtd_vender = btc_oem * min(0.90, abs(delta) * (risco / 2))
-                else: qtd_vender = 0
+                if delta <= -0.10: 
+                    qtd_vender = btc_oem * min(0.90, abs(delta) * (risco / 2))
+                    vendas_x.append(data_atual)
+                    vendas_y.append(p_mercado)
+                else: 
+                    qtd_vender = 0
                     
                 if qtd_vender > 0:
                     caixa_oem += qtd_vender * p_mercado
@@ -261,6 +277,7 @@ if df_hist is not None:
         dd_bnh = ((df_plot['Patrimonio_BnH'] / df_plot['Patrimonio_BnH'].cummax()) - 1).min() * 100
         dd_oem = ((df_plot['Patrimonio_OEM'] / df_plot['Patrimonio_OEM'].cummax()) - 1).min() * 100
 
+        # --- Métricas ---
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Estratégia Buy & Hold")
@@ -271,10 +288,37 @@ if df_hist is not None:
             st.metric("Retorno Final", f"{lucro_oem:.1f}%")
             st.metric("Drawdown Máximo (Risco)", f"{dd_oem:.1f}%", delta_color="inverse")
 
+        st.markdown("---")
+        
+        # --- Gráfico 1: Ações no Gráfico de Preço (NOVO) ---
+        st.subheader("🎯 Mapeamento de Entradas e Saídas (Gatilhos OEM)")
+        fig_sinais = go.Figure()
+        
+        # Linhas de Base
+        fig_sinais.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC', line=dict(color='white', width=1.5)))
+        fig_sinais.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=2)))
+        
+        # Sinais de Compra Elástica (Triângulos Verdes para cima)
+        fig_sinais.add_trace(go.Scatter(
+            x=compras_x, y=compras_y, mode='markers', name='Compra Elástica',
+            marker=dict(symbol='triangle-up', size=10, color='#00FF00', line=dict(width=1, color='black'))
+        ))
+        
+        # Sinais de Venda Elástica (Triângulos Vermelhos para baixo)
+        fig_sinais.add_trace(go.Scatter(
+            x=vendas_x, y=vendas_y, mode='markers', name='Venda Elástica',
+            marker=dict(symbol='triangle-down', size=10, color='#FF0000', line=dict(width=1, color='black'))
+        ))
+        
+        fig_sinais.update_layout(template="plotly_dark", yaxis_title="Preço (USD)", hovermode="x unified", height=500)
+        st.plotly_chart(fig_sinais, use_container_width=True)
+
+        # --- Gráfico 2: Evolução Patrimonial (Mantido) ---
+        st.subheader("📈 Crescimento de Patrimônio Comparado")
         fig_bt = go.Figure()
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_BnH'], name='Buy & Hold', line=dict(color='#888888', dash='dash')))
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_OEM'], name='Estratégia OEM', line=dict(color='#00FF00', width=3)))
-        fig_bt.update_layout(template="plotly_dark", title="Crescimento de Patrimônio (US$)", yaxis_title="Saldo em Dólar", hovermode="x unified")
+        fig_bt.update_layout(template="plotly_dark", yaxis_title="Saldo em Dólar (US$)", hovermode="x unified", height=400)
         st.plotly_chart(fig_bt, use_container_width=True)
 
 else:
