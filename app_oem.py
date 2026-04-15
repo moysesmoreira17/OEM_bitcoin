@@ -232,7 +232,7 @@ if df_hist is not None:
         st.title("🧪 Motor de Backtest Institucional")
         st.markdown(f"Simulando início há **{meses} meses** com capital de **US$ 1.000**.")
         
-        capital_inicial = 1000.0 # Aterrado para a realidade solicitada
+        capital_inicial = 100.0 # Aterrado para a realidade solicitada
         
         # Cenário 1: Buy and Hold (Compra tudo no primeiro dia e esquece)
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
