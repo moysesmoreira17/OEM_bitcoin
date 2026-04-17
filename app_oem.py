@@ -226,44 +226,64 @@ if df_hist is not None:
         
         st.plotly_chart(fig, use_container_width=True)
 # ==========================================
-    # ABA 2: BACKTEST INSTITUCIONAL (RAIO-X DE PORTFÓLIO)
+    # ABA 2: BACKTEST INSTITUCIONAL (MESA DE ESTRESSE)
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
-        st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando início há **{meses} meses** com capital customizado. *Com Modulação Macro OEM.*")
+        st.title("🧪 Mesa de Teste de Estresse (Backtest)")
+        st.markdown("Simule cenários reais customizando a sua exposição, os aportes contínuos e a fricção de mercado.")
         
-        # --- NOVOS INPUTS DO USUÁRIO PARA O BACKTEST ---
-        st.markdown("### 💼 Saldo Inicial do Backtest (Dia 1)")
-        col_in1, col_in2 = st.columns(2)
-        with col_in1:
-            start_usd = st.number_input("Capital Inicial (Caixa USD)", value=1000.0, step=100.0)
-        with col_in2:
-            start_btc = st.number_input("Bitcoin Inicial (Saldo BTC)", value=0.0000, step=0.01, format="%.4f")
+        # --- PAINEL DE CONTROLE QUANTITATIVO ---
+        st.markdown("### 🎛️ Parâmetros do Portfólio")
+        c_fin, c_risk, c_kine = st.columns(3)
+        
+        with c_fin:
+            st.markdown("💰 **1. Fluxo de Caixa**")
+            start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
+            start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
+            aporte_mensal = st.number_input("Aporte Mensal (Efeito Salário)", min_value=0.0, value=250.0, step=50.0)
             
+        with c_risk:
+            st.markdown("🛡️ **2. Gestão de Risco**")
+            max_buy_pct = st.slider("Teto de Compra (% Máx do Caixa)", 10, 100, 90) / 100.0
+            max_sell_pct = st.slider("Teto de Venda (% Máx das Moedas)", 10, 100, 90) / 100.0
+            taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
+            
+        with c_kine:
+            st.markdown("⏱️ **3. Sensibilidade OEM**")
+            janela_cin = st.slider("Janela Cinemática (Dias)", 1, 30, 7)
+            sensibilidade = st.slider("Força do Modulador Macro", 1.0, 10.0, 5.0, step=0.5)
+            
+        # ==========================================
+        # PREPARAÇÃO DOS DADOS E VARIÁVEIS DE ESTADO
+        # ==========================================
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
         
-        # O capital real que a pessoa tinha no Dia 1 (Dólar + Valor em Dólar do BTC que já tinha)
-        capital_inicial_total = start_usd + (start_btc * preco_compra_bnh)
+        # Recalcula a cinemática com base na janela escolhida pelo usuário
+        df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
         
-        # Cenário 1: Buy and Hold (Pega os Dólares iniciais, compra tudo em BTC no dia 1, e soma ao BTC que já tinha)
-        qtd_btc_bnh = start_btc + (start_usd / preco_compra_bnh)
-        df_plot['Patrimonio_BnH'] = df_plot['Mercado'] * qtd_btc_bnh
+        # Inicialização Buy & Hold (Agora é DCA Cego)
+        qtd_btc_bnh = start_btc + ((start_usd * (1 - taxa_corretora)) / preco_compra_bnh) if preco_compra_bnh > 0 else 0
+        total_investido_bnh = start_usd + (start_btc * preco_compra_bnh)
         
-        # Cenário 2: Teoria OEM (Gestão Dinâmica)
+        # Inicialização OEM Dinâmica
         caixa_oem = start_usd
         btc_oem = start_btc
-        patrimonio_hist_oem = []
+        total_investido_oem = start_usd + (start_btc * preco_compra_bnh)
         
-        # Rastreadores de Composição
+        patrimonio_hist_oem = []
         hist_caixa = []
         hist_valor_btc = []
+        patrimonio_hist_bnh = []
         
-        # Rastreadores de Sinais Visuais
         compras_x, compras_y = [], []
         vendas_x, vendas_y = [], []
         
-        SENSIBILIDADE = 5 # Peso da derivada de 7 dias
+        # Rastreador de mês para injetar o Aporte Mensal
+        mes_anterior = df_plot.iloc[0]['Data'].month
 
+        # ==========================================
+        # O MOTOR DE EXECUÇÃO
+        # ==========================================
         for _, row in df_plot.iterrows():
             p_mercado = row['Mercado']
             p_justo = row['OEM']
@@ -271,7 +291,19 @@ if df_hist is not None:
             derivada_btc = row['dBTC_dt']
             delta = (p_justo - p_mercado) / p_justo
             
-            # --- 1. SINAIS PUROS DA BÚSSOLA OEM ---
+            # --- INJEÇÃO DO APORTE MENSAL (Efeito Salário) ---
+            if data_atual.month != mes_anterior:
+                # OEM guarda o dinheiro no caixa
+                caixa_oem += aporte_mensal
+                total_investido_oem += aporte_mensal
+                
+                # BnH compra a mercado pagando taxa
+                qtd_btc_bnh += (aporte_mensal * (1 - taxa_corretora)) / p_mercado
+                total_investido_bnh += aporte_mensal
+                
+                mes_anterior = data_atual.month
+            
+            # --- BÚSSOLA OEM ---
             if delta > 0.02: 
                 compras_x.append(data_atual)
                 compras_y.append(p_mercado)
@@ -279,57 +311,70 @@ if df_hist is not None:
                 vendas_x.append(data_atual)
                 vendas_y.append(p_mercado)
                 
-            # --- 2. EXECUÇÃO FINANCEIRA PARCIAL E DINÂMICA ---
+            # --- EXECUÇÃO DE COMPRA (OEM) ---
             if caixa_oem > 5: 
                 if delta > 0.02: 
-                    modulador_compra = max(0.2, min(1 - (derivada_btc * SENSIBILIDADE), 2.0))
+                    modulador_compra = max(0.2, min(1 - (derivada_btc * sensibilidade), 2.0))
                     forca_compra = (delta * (risco / 2)) * modulador_compra
-                    valor_compra = caixa_oem * min(0.90, forca_compra)
+                    valor_compra = caixa_oem * min(max_buy_pct, forca_compra)
                 elif delta > -0.10: 
-                    valor_compra = caixa_oem * 0.01 
+                    valor_compra = caixa_oem * 0.01 # DCA 1% 
                 else: 
                     valor_compra = 0
                 
                 if valor_compra > 0:
-                    btc_oem += valor_compra / p_mercado
+                    # Aplica a taxa de corretagem (você recebe menos BTC do que comprou)
+                    btc_oem += (valor_compra * (1 - taxa_corretora)) / p_mercado
                     caixa_oem -= valor_compra
                 
+            # --- EXECUÇÃO DE VENDA (OEM) ---
             if btc_oem > 0:
                 if delta <= -0.10: 
-                    modulador_venda = max(0.2, min(1 + (derivada_btc * SENSIBILIDADE), 2.0))
+                    modulador_venda = max(0.2, min(1 + (derivada_btc * sensibilidade), 2.0))
                     forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
-                    qtd_vender = btc_oem * min(0.90, forca_venda)
+                    qtd_vender = btc_oem * min(max_sell_pct, forca_venda)
                 else: 
                     qtd_vender = 0
                     
                 if qtd_vender > 0:
-                    caixa_oem += qtd_vender * p_mercado 
+                    # Aplica a taxa de corretagem (você recebe menos Dólares na venda)
+                    caixa_oem += (qtd_vender * p_mercado) * (1 - taxa_corretora)
                     btc_oem -= qtd_vender
                 
+            # --- REGISTRO DIÁRIO DE PATRIMÔNIO ---
             hist_caixa.append(caixa_oem)
             hist_valor_btc.append(btc_oem * p_mercado)
             patrimonio_hist_oem.append(caixa_oem + (btc_oem * p_mercado))
+            patrimonio_hist_bnh.append(qtd_btc_bnh * p_mercado)
             
         df_plot['Patrimonio_OEM'] = patrimonio_hist_oem
+        df_plot['Patrimonio_BnH_DCA'] = patrimonio_hist_bnh
         df_plot['Caixa_Hist'] = hist_caixa
         df_plot['BTC_USD_Hist'] = hist_valor_btc
         
-        # Cálculos de Performance
-        lucro_bnh = ((df_plot['Patrimonio_BnH'].iloc[-1] - capital_inicial_total) / capital_inicial_total) * 100
-        lucro_oem = ((df_plot['Patrimonio_OEM'].iloc[-1] - capital_inicial_total) / capital_inicial_total) * 100
-        dd_bnh = ((df_plot['Patrimonio_BnH'] / df_plot['Patrimonio_BnH'].cummax()) - 1).min() * 100
-        dd_oem = ((df_plot['Patrimonio_OEM'] / df_plot['Patrimonio_OEM'].cummax()) - 1).min() * 100
+        # --- CÁLCULOS DE PERFORMANCE (Com base no Total Investido Real) ---
+        if total_investido_oem > 0:
+            lucro_bnh = ((df_plot['Patrimonio_BnH_DCA'].iloc[-1] - total_investido_bnh) / total_investido_bnh) * 100
+            lucro_oem = ((df_plot['Patrimonio_OEM'].iloc[-1] - total_investido_oem) / total_investido_oem) * 100
+            dd_bnh = ((df_plot['Patrimonio_BnH_DCA'] / df_plot['Patrimonio_BnH_DCA'].cummax()) - 1).fillna(0).min() * 100
+            dd_oem = ((df_plot['Patrimonio_OEM'] / df_plot['Patrimonio_OEM'].cummax()) - 1).fillna(0).min() * 100
+        else:
+            lucro_bnh, lucro_oem, dd_bnh, dd_oem = 0.0, 0.0, 0.0, 0.0
 
-        # --- EXIBIÇÃO DAS MÉTRICAS ---
+        # ==========================================
+        # EXIBIÇÃO VISUAL E GRÁFICOS
+        # ==========================================
         st.markdown("---")
+        st.markdown(f"<p style='text-align: center; color: #888; font-size: 14px;'><i>Total de dinheiro real tirado do seu bolso no período: <b>US$ {total_investido_oem:,.2f}</b></i></p>", unsafe_allow_html=True)
+        
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.subheader("Buy & Hold (Passivo)")
-            st.metric("Retorno Final", f"{lucro_bnh:.1f}%")
+            st.subheader("Benchmark (DCA Cego)")
+            st.metric("Retorno Líquido", f"{lucro_bnh:.1f}%")
             st.metric("Risco (Drawdown Máx)", f"{dd_bnh:.1f}%", delta_color="inverse")
         with c2:
             st.subheader("Teoria OEM (Ativo)")
-            st.metric("Retorno Final", f"{lucro_oem:.1f}%")
+            st.metric("Retorno Líquido", f"{lucro_oem:.1f}%")
             st.metric("Risco (Drawdown Máx)", f"{dd_oem:.1f}%", delta_color="inverse")
         with c3:
             st.subheader("Sua Carteira Final OEM")
@@ -338,9 +383,6 @@ if df_hist is not None:
 
         st.markdown("---")
         
-        # ... (A partir daqui, os gráficos continuam exatamente iguais ao código anterior)
-        
-        # 1. Gráfico de Bússola Estrutural
         st.subheader("🎯 Bússola Estrutural (Sinais da Teoria)")
         fig_sinais = go.Figure()
         fig_sinais.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC', line=dict(color='white', width=1.5)))
@@ -350,19 +392,16 @@ if df_hist is not None:
         fig_sinais.update_layout(template="plotly_dark", yaxis_title="Preço (USD)", hovermode="x unified", height=400)
         st.plotly_chart(fig_sinais, use_container_width=True)
 
-        # 2. NOVO GRÁFICO: Raio-X do Portfólio (Área Empilhada)
         st.subheader("⚖️ Dinâmica de Composição do Portfólio OEM")
-        st.markdown("Observe como o modelo 'gasta' os dólares na queda e 'recupera' dólares nas vendas parciais.")
         fig_comp = go.Figure()
         fig_comp.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['BTC_USD_Hist'], name='Valor em Bitcoin (USD)', stackgroup='one', fillcolor='rgba(247, 147, 26, 0.7)', line=dict(width=0)))
         fig_comp.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Caixa_Hist'], name='Reserva de Caixa (USD)', stackgroup='one', fillcolor='rgba(0, 255, 127, 0.7)', line=dict(width=0)))
         fig_comp.update_layout(template="plotly_dark", yaxis_title="Saldo Total (US$)", hovermode="x unified", height=400)
         st.plotly_chart(fig_comp, use_container_width=True)
 
-        # 3. Gráfico de Patrimônio Comparado
         st.subheader("📈 Crescimento de Patrimônio Líquido")
         fig_bt = go.Figure()
-        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_BnH'], name='Buy & Hold', line=dict(color='#888888', dash='dash')))
+        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_BnH_DCA'], name='Benchmark (DCA Cego)', line=dict(color='#888888', dash='dash')))
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Patrimonio_OEM'], name='Estratégia OEM', line=dict(color='#00FF00', width=3)))
         fig_bt.update_layout(template="plotly_dark", yaxis_title="Patrimônio Total (US$)", hovermode="x unified", height=300)
         st.plotly_chart(fig_bt, use_container_width=True)
