@@ -230,18 +230,28 @@ if df_hist is not None:
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Motor de Backtest Institucional")
-        st.markdown(f"Simulando início há **{meses} meses** com capital de **US$ 100.00**.")
+        st.markdown(f"Simulando início há **{meses} meses** com capital customizado. *Com Modulação Macro OEM.*")
         
-        capital_inicial = 100.0 # Aterrado para a realidade solicitada
-        
-        # Cenário 1: Buy and Hold (Compra tudo no primeiro dia e esquece)
+        # --- NOVOS INPUTS DO USUÁRIO PARA O BACKTEST ---
+        st.markdown("### 💼 Saldo Inicial do Backtest (Dia 1)")
+        col_in1, col_in2 = st.columns(2)
+        with col_in1:
+            start_usd = st.number_input("Capital Inicial (Caixa USD)", value=1000.0, step=100.0)
+        with col_in2:
+            start_btc = st.number_input("Bitcoin Inicial (Saldo BTC)", value=0.0000, step=0.01, format="%.4f")
+            
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
-        qtd_btc_bnh = capital_inicial / preco_compra_bnh
+        
+        # O capital real que a pessoa tinha no Dia 1 (Dólar + Valor em Dólar do BTC que já tinha)
+        capital_inicial_total = start_usd + (start_btc * preco_compra_bnh)
+        
+        # Cenário 1: Buy and Hold (Pega os Dólares iniciais, compra tudo em BTC no dia 1, e soma ao BTC que já tinha)
+        qtd_btc_bnh = start_btc + (start_usd / preco_compra_bnh)
         df_plot['Patrimonio_BnH'] = df_plot['Mercado'] * qtd_btc_bnh
         
         # Cenário 2: Teoria OEM (Gestão Dinâmica)
-        caixa_oem = capital_inicial
-        btc_oem = 0.0
+        caixa_oem = start_usd
+        btc_oem = start_btc
         patrimonio_hist_oem = []
         
         # Rastreadores de Composição
@@ -270,15 +280,13 @@ if df_hist is not None:
                 vendas_y.append(p_mercado)
                 
             # --- 2. EXECUÇÃO FINANCEIRA PARCIAL E DINÂMICA ---
-            # O bot só compra se tiver pelo menos 5 dólares na conta
             if caixa_oem > 5: 
                 if delta > 0.02: 
                     modulador_compra = max(0.2, min(1 - (derivada_btc * SENSIBILIDADE), 2.0))
                     forca_compra = (delta * (risco / 2)) * modulador_compra
-                    # Compra fracionada: usa no máximo 90% do caixa disponível
                     valor_compra = caixa_oem * min(0.90, forca_compra)
                 elif delta > -0.10: 
-                    valor_compra = caixa_oem * 0.01 # DCA 1% cego à macro
+                    valor_compra = caixa_oem * 0.01 
                 else: 
                     valor_compra = 0
                 
@@ -286,21 +294,18 @@ if df_hist is not None:
                     btc_oem += valor_compra / p_mercado
                     caixa_oem -= valor_compra
                 
-            # O bot só vende se tiver frações de BTC na carteira
             if btc_oem > 0:
                 if delta <= -0.10: 
                     modulador_venda = max(0.2, min(1 + (derivada_btc * SENSIBILIDADE), 2.0))
                     forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
-                    # Venda fracionada: vende no máximo 90% das moedas disponíveis
                     qtd_vender = btc_oem * min(0.90, forca_venda)
                 else: 
                     qtd_vender = 0
                     
                 if qtd_vender > 0:
-                    caixa_oem += qtd_vender * p_mercado # Transforma BTC em Dólar
+                    caixa_oem += qtd_vender * p_mercado 
                     btc_oem -= qtd_vender
                 
-            # Registrando a evolução dia a dia para os gráficos
             hist_caixa.append(caixa_oem)
             hist_valor_btc.append(btc_oem * p_mercado)
             patrimonio_hist_oem.append(caixa_oem + (btc_oem * p_mercado))
@@ -310,12 +315,13 @@ if df_hist is not None:
         df_plot['BTC_USD_Hist'] = hist_valor_btc
         
         # Cálculos de Performance
-        lucro_bnh = ((df_plot['Patrimonio_BnH'].iloc[-1] - capital_inicial) / capital_inicial) * 100
-        lucro_oem = ((df_plot['Patrimonio_OEM'].iloc[-1] - capital_inicial) / capital_inicial) * 100
+        lucro_bnh = ((df_plot['Patrimonio_BnH'].iloc[-1] - capital_inicial_total) / capital_inicial_total) * 100
+        lucro_oem = ((df_plot['Patrimonio_OEM'].iloc[-1] - capital_inicial_total) / capital_inicial_total) * 100
         dd_bnh = ((df_plot['Patrimonio_BnH'] / df_plot['Patrimonio_BnH'].cummax()) - 1).min() * 100
         dd_oem = ((df_plot['Patrimonio_OEM'] / df_plot['Patrimonio_OEM'].cummax()) - 1).min() * 100
 
         # --- EXIBIÇÃO DAS MÉTRICAS ---
+        st.markdown("---")
         c1, c2, c3 = st.columns(3)
         with c1:
             st.subheader("Buy & Hold (Passivo)")
@@ -326,11 +332,13 @@ if df_hist is not None:
             st.metric("Retorno Final", f"{lucro_oem:.1f}%")
             st.metric("Risco (Drawdown Máx)", f"{dd_oem:.1f}%", delta_color="inverse")
         with c3:
-            st.subheader("Caixa Atual OEM")
-            st.metric("Poder de Fogo (USD)", f"US$ {caixa_oem:.2f}")
-            st.metric("Saldo em BTC", f"{btc_oem:.5f} BTC")
+            st.subheader("Sua Carteira Final OEM")
+            st.metric("Caixa Restante (USD)", f"US$ {caixa_oem:,.2f}")
+            st.metric("Saldo Final em BTC", f"{btc_oem:.5f} BTC")
 
         st.markdown("---")
+        
+        # ... (A partir daqui, os gráficos continuam exatamente iguais ao código anterior)
         
         # 1. Gráfico de Bússola Estrutural
         st.subheader("🎯 Bússola Estrutural (Sinais da Teoria)")
