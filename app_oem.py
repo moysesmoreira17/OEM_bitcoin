@@ -29,8 +29,7 @@ def carregar_dados_mercado(meses):
     try:
         hoje = datetime.now()
         inicio = hoje - relativedelta(months=meses)
-        # Adiciona margem de 10 dias extras para o cálculo perfeito da derivada móvel no início do gráfico
-        inicio_query = inicio - relativedelta(days=10) 
+        inicio_query = inicio - relativedelta(days=40) # Margem maior para garantir cálculos móveis corretos no início
         inicio_str = inicio_query.strftime('%Y-%m-%d')
         
         # 1. FRED
@@ -61,10 +60,10 @@ def carregar_dados_mercado(meses):
             time.sleep(0.3) 
 
         # 3. Blockchain (Dificuldade)
-        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+1}months&format=json&sampled=true"
+        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+2}months&format=json&sampled=true"
         resp_d = requests.get(url_d).json().get('values', [])
 
-        # 4. Yahoo Finance (DXY - Índice do Dólar em Tempo Real)
+        # 4. Yahoo Finance (DXY - Índice do Dólar)
         try:
             dxy_raw = yf.Ticker("DX-Y.NYB").history(start=inicio_str)[['Close']]
             dxy_raw.index = dxy_raw.index.tz_localize(None).normalize()
@@ -95,8 +94,8 @@ def carregar_dados_mercado(meses):
                    df_btc.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer').ffill().dropna()
         
-        # Filtra para manter estritamente o período solicitado (remove os dias extras do pré-cálculo)
-        df_final = df_final[df_final.index >= pd.to_datetime(inicio_str)]
+        # Filtra estritamente para o período solicitado do backtest
+        df_final = df_final[df_final.index >= pd.to_datetime(inicio.strftime('%Y-%m-%d'))]
         return df_final
     except Exception as e:
         st.error(f"🛑 Interceptação de Segurança: {e}")
@@ -116,17 +115,27 @@ def buscar_dxy_live():
         return 100.0 # Fallback
 
 # ==========================================
-# 2. INTERFACE E PROCESSAMENTO
+# 2. INTERFACE E SIDEBAR (LEIS UNIVERSAIS)
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
-meses = st.sidebar.slider("Janela de Análise (Meses)", 1, 120, 48, step=1)
-risco = st.sidebar.slider("Agressividade Dinâmica", 1.0, 5.0, 3.0, step=0.5)
+meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
+risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 3.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("💼 Seu Portfólio")
-caixa = st.sidebar.number_input("Saldo em Caixa (USD)", value=20.0, step=10.0)
-saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", value=0.0009, step=0.000100, format="%.4f")
+st.sidebar.subheader("💼 Seu Portfólio Live")
+caixa = st.sidebar.number_input("Saldo em Caixa (USD)", min_value=0.0, value=20.0, step=10.0)
+saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", min_value=0.0, value=0.0009, step=0.000100, format="%.4f")
+
+# --- LEIS UNIVERSAIS DE EXECUÇÃO ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛡️ Limites de Execução")
+max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx do Caixa)", 1, 100, 90) / 100.0
+max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx do BTC)", 1, 100, 10) / 100.0
+
+st.sidebar.subheader("⏱️ Cinemática (Radar)")
+janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 7)
+sensibilidade = st.sidebar.slider("Força do Modulador Macro", 1.0, 10.0, 5.0, step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -154,23 +163,21 @@ if df_hist is not None:
     df_plot = pd.DataFrame(dados_oem)
     df_plot['1_DXY'] = 1 / df_plot['DXY']
     
-    # ----------------------------------------------------
-    # NOVA LÓGICA: DERIVADA DO BITCOIN (CINEMÁTICA 7 DIAS)
-    # ----------------------------------------------------
-    df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=7).fillna(0)
+    # Cinemática Móvel (usando a janela universal)
+    df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
 
     # ==========================================
-    # ABA 1: LIVE
+    # ABA 1: MONITORAMENTO LIVE
     # ==========================================
     if aba_selecionada == "Monitoramento Live":
         st.title("📡 Terminal OEM - Tempo Real")
         
         preco_agora = buscar_preco_live()
         dxy_agora = buscar_dxy_live()
-        inverso_dxy_agora = 1 / dxy_agora 
+        inverso_dxy_agora = 1 / dxy_agora if dxy_agora else 0
         
         if preco_agora: df_plot.iloc[-1, df_plot.columns.get_loc('Mercado')] = preco_agora
-        df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
+        if dxy_agora: df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
         df_plot.iloc[-1, df_plot.columns.get_loc('1_DXY')] = inverso_dxy_agora
 
         u = df_plot.iloc[-1]
@@ -180,24 +187,24 @@ if df_hist is not None:
         
         delta = (oem_corrigido - u['Mercado']) / oem_corrigido
         derivada_live = u['dBTC_dt']
-        sensibilidade_live = 5
         
         acao_cor = "white"
+        
         if delta > 0.02:
-            modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade_live), 2.0))
+            modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade), 2.0))
             forca_compra = (delta * (risco / 2)) * modulador_compra
-            porcentagem = min(0.90, forca_compra)
+            porcentagem = min(max_buy_pct, forca_compra) 
             
-            status = "🟢 COMPRA ELASTICA (Macro Ajustada)"
+            status = "🟢 COMPRA ELÁSTICA"
             recomendacao = f"Compre US$ {caixa * porcentagem:,.2f} ({porcentagem*100:.1f}% do Caixa)"
             acao_cor = "#00FF00"
             
         elif delta < -0.10:
-            modulador_venda = max(0.2, min(1 + (derivada_live * sensibilidade_live), 2.0))
+            modulador_venda = max(0.2, min(1 + (derivada_live * sensibilidade), 2.0))
             forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
-            porcentagem = min(0.90, forca_venda)
+            porcentagem = min(max_sell_pct, forca_venda) 
             
-            status = "🔴 VENDA ELASTICA (Macro Ajustada)"
+            status = "🔴 VENDA PARCIAL"
             qtd_venda = saldo_btc * porcentagem
             recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~US$ {qtd_venda * u['Mercado']:,.2f})"
             acao_cor = "#FF0000"
@@ -209,7 +216,7 @@ if df_hist is not None:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Preço Justo (OEM)", f"US$ {oem_corrigido:,.0f}")
         c2.metric("Preço Mercado", f"US$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
-        c3.metric("Força Inversa (1/DXY)", f"{inverso_dxy_agora:.5f}", f"Cinemática 7d: {derivada_live*100:.1f}%", delta_color="off")
+        c3.metric("Força Inversa (1/DXY)", f"{inverso_dxy_agora:.5f}", f"Cinemática {janela_cin}d: {derivada_live*100:.1f}%", delta_color="off")
         
         with c4:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
@@ -225,44 +232,31 @@ if df_hist is not None:
         fig.update_yaxes(title_text="Índice 1/DXY", secondary_y=True, showgrid=False) 
         
         st.plotly_chart(fig, use_container_width=True)
-# ==========================================
+
+    # ==========================================
     # ABA 2: BACKTEST INSTITUCIONAL (MESA DE ESTRESSE)
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
-        st.markdown("Simule cenários reais customizando a sua exposição, os aportes contínuos e a fricção de mercado.")
+        st.markdown("Simule cenários reais customizando a sua exposição, aportes contínuos e taxas.")
         
-        # --- PAINEL DE CONTROLE QUANTITATIVO ---
+        # --- PAINEL FINANCEIRO DE ESTRESSE ---
         st.markdown("### 🎛️ Parâmetros do Portfólio")
-        c_fin, c_risk, c_kine = st.columns(3)
+        c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         
-        with c_fin:
-            st.markdown("💰 **1. Fluxo de Caixa**")
+        with c_fin1:
             start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
+        with c_fin2:
             start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
-            aporte_mensal = st.number_input("Aporte Mensal (Efeito Salário)", min_value=0.0, value=250.0, step=50.0)
-            
-        with c_risk:
-            st.markdown("🛡️ **2. Gestão de Risco**")
-            max_buy_pct = st.slider("Teto de Compra (% Máx do Caixa)", 10, 100, 90) / 100.0
-            max_sell_pct = st.slider("Teto de Venda (% Máx das Moedas)", 10, 100, 90) / 100.0
+        with c_fin3:
+            aporte_mensal = st.number_input("Aporte Mensal (Salário)", min_value=0.0, value=250.0, step=50.0)
+        with c_fin4:
             taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
             
-        with c_kine:
-            st.markdown("⏱️ **3. Sensibilidade OEM**")
-            janela_cin = st.slider("Janela Cinemática (Dias)", 1, 30, 7)
-            sensibilidade = st.slider("Força do Modulador Macro", 1.0, 10.0, 5.0, step=0.5)
-            
-        # ==========================================
-        # PREPARAÇÃO DOS DADOS E VARIÁVEIS DE ESTADO
-        # ==========================================
         preco_compra_bnh = df_plot.iloc[0]['Mercado']
         
-        # Recalcula a cinemática com base na janela escolhida pelo usuário
-        df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
-        
-        # Inicialização Buy & Hold (Agora é DCA Cego)
-        qtd_btc_bnh = start_btc + ((start_usd * (1 - taxa_corretora)) / preco_compra_bnh) if preco_compra_bnh > 0 else 0
+        # Inicialização Benchmark (DCA Cego)
+        qtd_btc_bnh = start_btc + ((start_usd * (1 - taxa_corretora)) / preco_compra_bnh) if preco_compra_bnh > 0 else start_btc
         total_investido_bnh = start_usd + (start_btc * preco_compra_bnh)
         
         # Inicialização OEM Dinâmica
@@ -278,12 +272,8 @@ if df_hist is not None:
         compras_x, compras_y = [], []
         vendas_x, vendas_y = [], []
         
-        # Rastreador de mês para injetar o Aporte Mensal
         mes_anterior = df_plot.iloc[0]['Data'].month
 
-        # ==========================================
-        # O MOTOR DE EXECUÇÃO
-        # ==========================================
         for _, row in df_plot.iterrows():
             p_mercado = row['Mercado']
             p_justo = row['OEM']
@@ -291,19 +281,17 @@ if df_hist is not None:
             derivada_btc = row['dBTC_dt']
             delta = (p_justo - p_mercado) / p_justo
             
-            # --- INJEÇÃO DO APORTE MENSAL (Efeito Salário) ---
+            # 1. INJEÇÃO DO APORTE MENSAL
             if data_atual.month != mes_anterior:
-                # OEM guarda o dinheiro no caixa
                 caixa_oem += aporte_mensal
                 total_investido_oem += aporte_mensal
                 
-                # BnH compra a mercado pagando taxa
                 qtd_btc_bnh += (aporte_mensal * (1 - taxa_corretora)) / p_mercado
                 total_investido_bnh += aporte_mensal
                 
                 mes_anterior = data_atual.month
             
-            # --- BÚSSOLA OEM ---
+            # 2. BÚSSOLA OEM (Gráficos Visuais)
             if delta > 0.02: 
                 compras_x.append(data_atual)
                 compras_y.append(p_mercado)
@@ -311,23 +299,22 @@ if df_hist is not None:
                 vendas_x.append(data_atual)
                 vendas_y.append(p_mercado)
                 
-            # --- EXECUÇÃO DE COMPRA (OEM) ---
+            # 3. EXECUÇÃO DE COMPRA OEM
             if caixa_oem > 5: 
                 if delta > 0.02: 
                     modulador_compra = max(0.2, min(1 - (derivada_btc * sensibilidade), 2.0))
                     forca_compra = (delta * (risco / 2)) * modulador_compra
                     valor_compra = caixa_oem * min(max_buy_pct, forca_compra)
                 elif delta > -0.10: 
-                    valor_compra = caixa_oem * 0.01 # DCA 1% 
+                    valor_compra = caixa_oem * 0.01 
                 else: 
                     valor_compra = 0
                 
                 if valor_compra > 0:
-                    # Aplica a taxa de corretagem (você recebe menos BTC do que comprou)
                     btc_oem += (valor_compra * (1 - taxa_corretora)) / p_mercado
                     caixa_oem -= valor_compra
                 
-            # --- EXECUÇÃO DE VENDA (OEM) ---
+            # 4. EXECUÇÃO DE VENDA OEM
             if btc_oem > 0:
                 if delta <= -0.10: 
                     modulador_venda = max(0.2, min(1 + (derivada_btc * sensibilidade), 2.0))
@@ -337,11 +324,10 @@ if df_hist is not None:
                     qtd_vender = 0
                     
                 if qtd_vender > 0:
-                    # Aplica a taxa de corretagem (você recebe menos Dólares na venda)
                     caixa_oem += (qtd_vender * p_mercado) * (1 - taxa_corretora)
                     btc_oem -= qtd_vender
                 
-            # --- REGISTRO DIÁRIO DE PATRIMÔNIO ---
+            # 5. REGISTROS DIÁRIOS
             hist_caixa.append(caixa_oem)
             hist_valor_btc.append(btc_oem * p_mercado)
             patrimonio_hist_oem.append(caixa_oem + (btc_oem * p_mercado))
@@ -352,7 +338,7 @@ if df_hist is not None:
         df_plot['Caixa_Hist'] = hist_caixa
         df_plot['BTC_USD_Hist'] = hist_valor_btc
         
-        # --- CÁLCULOS DE PERFORMANCE (Com base no Total Investido Real) ---
+        # --- CÁLCULOS DE PERFORMANCE ---
         if total_investido_oem > 0:
             lucro_bnh = ((df_plot['Patrimonio_BnH_DCA'].iloc[-1] - total_investido_bnh) / total_investido_bnh) * 100
             lucro_oem = ((df_plot['Patrimonio_OEM'].iloc[-1] - total_investido_oem) / total_investido_oem) * 100
@@ -361,11 +347,8 @@ if df_hist is not None:
         else:
             lucro_bnh, lucro_oem, dd_bnh, dd_oem = 0.0, 0.0, 0.0, 0.0
 
-        # ==========================================
-        # EXIBIÇÃO VISUAL E GRÁFICOS
-        # ==========================================
         st.markdown("---")
-        st.markdown(f"<p style='text-align: center; color: #888; font-size: 14px;'><i>Total de dinheiro real tirado do seu bolso no período: <b>US$ {total_investido_oem:,.2f}</b></i></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #888; font-size: 14px;'><i>Total de dinheiro injetado (Aportes Reais) no período: <b>US$ {total_investido_oem:,.2f}</b></i></p>", unsafe_allow_html=True)
         
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -407,4 +390,4 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
 else:
-    st.info("🔄 Aguardando conexão estável com as APIs... O servidor tentará carregar novamente em breve.")
+    st.info("🔄 Aguardando conexão com a Binance e com o FRED. Caso demore muito, verifique sua conexão ou recarregue a página.")
