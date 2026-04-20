@@ -130,7 +130,7 @@ saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", min_value=0.0, val
 # --- LEIS UNIVERSAIS DE EXECUÇÃO ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Limites de Execução")
-max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx do Caixa)", 1, 100, 90) / 100.0
+max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx do Caixa)", 1, 100, 15) / 100.0
 max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx do BTC)", 1, 100, 10) / 100.0
 
 st.sidebar.subheader("⏱️ Cinemática (Radar)")
