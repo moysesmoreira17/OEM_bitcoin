@@ -134,8 +134,8 @@ max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx do Caixa)", 1, 100, 90) 
 max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx do BTC)", 1, 100, 10) / 100.0
 
 st.sidebar.subheader("⏱️ Cinemática (Radar)")
-janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 7)
-sensibilidade = st.sidebar.slider("Força do Modulador Macro", 1.0, 10.0, 5.0, step=0.5)
+janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 20)
+sensibilidade = st.sidebar.slider("Força do Modulador Macro", 1.0, 10.0, 2.0, step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
