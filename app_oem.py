@@ -320,10 +320,10 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE (ALTA RESOLUÇÃO)
+    # ABA 3: OTIMIZADOR DE GRADE (ULTRA RESOLUÇÃO)
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
-        st.title("🔥 Otimizador de Matriz 5D (Alta Resolução)")
+        st.title("🔥 Otimizador de Matriz 5D (Ultra Resolução)")
         st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas**. *(Nota: Os sliders da barra lateral são ignorados nesta aba, pois o robô testa todos os cenários automaticamente).*")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
@@ -332,13 +332,16 @@ if df_hist is not None:
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal", min_value=0.0, value=250.0, step=50.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
-        if st.button("🚀 Processar Matriz de Alta Resolução", use_container_width=True):
-            with st.spinner("Computando 900 backtests vetoriais. Por favor, aguarde..."):
+        if st.button("🚀 Processar Matriz de Ultra Resolução", use_container_width=True):
+            with st.spinner("Computando 1.800 backtests vetoriais. A força bruta foi ativada, aguarde..."):
                 
-                # Matriz 5D de Alta Resolução (Granularidade Destravada)
+                # Matriz 5D de Ultra Resolução (Granularidade Máxima no Modulador)
                 janelas_teste = [3, 7, 14, 21]
-                riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           # Agressividade passo a passo
-                sensibilidades_teste = [1.0, 3.0, 5.0, 7.0, 9.0]   # Modulador passo a passo
+                riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
+                
+                # --- SUA EXIGÊNCIA AQUI: Modulador de 1 a 10 ---
+                sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
+                
                 compras_teste = [0.3, 0.6, 0.9]
                 vendas_teste = [0.1, 0.3, 0.6] 
                 
@@ -402,7 +405,7 @@ if df_hist is not None:
                 df_res = pd.DataFrame(resultados)
                 df_res = df_res.sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
                 
-                st.success(f"✅ Processamento Concluído! O computador rodou {len(combinacoes)} cenários simultâneos com sucesso.")
+                st.success(f"✅ Processamento Concluído! O computador testou {len(combinacoes)} cenários simultâneos (Matriz de 1.800 quadrantes).")
                 
                 st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
                 st.dataframe(df_res.head(5), use_container_width=True)
@@ -424,7 +427,7 @@ if df_hist is not None:
                     r_bst, c_bst, v_bst = get_best_point(pivot_1)
                     
                     fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
-                    fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=400)
+                    fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
                     st.plotly_chart(fig_h1, use_container_width=True)
                     st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
                     
@@ -433,7 +436,7 @@ if df_hist is not None:
                     r_bst, c_bst, v_bst = get_best_point(pivot_2)
                     
                     fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
-                    fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=400)
+                    fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
                     st.plotly_chart(fig_h2, use_container_width=True)
                     st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
@@ -442,7 +445,7 @@ if df_hist is not None:
                     r_bst, c_bst, v_bst = get_best_point(pivot_3)
                     
                     fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
-                    fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=400)
+                    fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
                     st.plotly_chart(fig_h3, use_container_width=True)
                     st.warning(f"**📍 Ponto de Ouro:**\nCompra **{c_bst}** e Venda **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
