@@ -282,7 +282,7 @@ if df_hist is not None:
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Caixa Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
@@ -394,7 +394,7 @@ if df_hist is not None:
         st.markdown("O Otimizador varre as 5 variáveis vitais. O seu limite de Z-Score da barra lateral atua como um 'Disjuntor Global' durante este teste para medir a eficácia da proteção contra bolhas.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Caixa Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
