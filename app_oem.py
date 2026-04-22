@@ -320,11 +320,11 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE (5 DIMENSÕES)
+    # ABA 3: OTIMIZADOR DE GRADE (ALTA RESOLUÇÃO)
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
-        st.title("🔥 Otimizador de Matriz 5D")
-        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas**.")
+        st.title("🔥 Otimizador de Matriz 5D (Alta Resolução)")
+        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas**. *(Nota: Os sliders da barra lateral são ignorados nesta aba, pois o robô testa todos os cenários automaticamente).*")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         with c_fin1: start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
@@ -332,18 +332,19 @@ if df_hist is not None:
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal", min_value=0.0, value=250.0, step=50.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
-        if st.button("🚀 Processar Matriz 5D", use_container_width=True):
-            with st.spinner("Computando 243 backtests vetoriais. Por favor, aguarde..."):
+        if st.button("🚀 Processar Matriz de Alta Resolução", use_container_width=True):
+            with st.spinner("Computando 900 backtests vetoriais. Por favor, aguarde..."):
                 
-                # Matriz 5D
-                janelas_teste = [3, 7, 14]
-                riscos_teste = [1.0, 3.0, 5.0]           # Agressividade Base
-                sensibilidades_teste = [1.0, 5.0, 9.0]   # Força do Modulador
+                # Matriz 5D de Alta Resolução (Granularidade Destravada)
+                janelas_teste = [3, 7, 14, 21]
+                riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           # Agressividade passo a passo
+                sensibilidades_teste = [1.0, 3.0, 5.0, 7.0, 9.0]   # Modulador passo a passo
                 compras_teste = [0.3, 0.6, 0.9]
                 vendas_teste = [0.1, 0.3, 0.6] 
                 
                 combinacoes = list(itertools.product(janelas_teste, riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
                 
+                # Extraindo dados para numpy
                 mercado_arr = df_plot['Mercado'].values
                 oem_arr = df_plot['OEM'].values
                 meses_arr = df_plot['Data'].dt.month.values
@@ -401,7 +402,7 @@ if df_hist is not None:
                 df_res = pd.DataFrame(resultados)
                 df_res = df_res.sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
                 
-                st.success(f"✅ Processamento Concluído! O computador rodou {len(combinacoes)} cenários com sucesso.")
+                st.success(f"✅ Processamento Concluído! O computador rodou {len(combinacoes)} cenários simultâneos com sucesso.")
                 
                 st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
                 st.dataframe(df_res.head(5), use_container_width=True)
@@ -411,13 +412,13 @@ if df_hist is not None:
                 
                 c_h1, c_h2, c_h3 = st.columns(3)
                 
+                # Função para extrair a coordenada campeã
                 def get_best_point(pivot_df):
                     c_max = pivot_df.max().idxmax()
                     r_max = pivot_df[c_max].idxmax()
                     v_max = pivot_df.loc[r_max, c_max]
                     return r_max, c_max, v_max
 
-                # HEATMAP 1: Agressividade vs Modulador
                 with c_h1:
                     pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Índice Sortino', aggfunc='max')
                     r_bst, c_bst, v_bst = get_best_point(pivot_1)
@@ -427,7 +428,6 @@ if df_hist is not None:
                     st.plotly_chart(fig_h1, use_container_width=True)
                     st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
                     
-                # HEATMAP 2: Janela vs Modulador
                 with c_h2:
                     pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
                     r_bst, c_bst, v_bst = get_best_point(pivot_2)
@@ -437,7 +437,6 @@ if df_hist is not None:
                     st.plotly_chart(fig_h2, use_container_width=True)
                     st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
-                # HEATMAP 3: Compra vs Venda
                 with c_h3:
                     pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
                     r_bst, c_bst, v_bst = get_best_point(pivot_3)
