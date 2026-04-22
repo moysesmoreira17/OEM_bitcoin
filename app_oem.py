@@ -9,7 +9,7 @@ import math
 import time
 import yfinance as yf
 import numpy as np
-import itertools # <-- NOVO: Biblioteca para criar combinações matemáticas (4D)
+import itertools 
 
 # ==========================================
 # 1. CONFIGURAÇÃO E DADOS BASE
@@ -107,7 +107,7 @@ def buscar_dxy_live():
 # 2. INTERFACE E SIDEBAR 
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
-aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (4D)"])
+aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (5D)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 3.0, step=0.5)
 
@@ -118,7 +118,7 @@ saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", min_value=0.0, val
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Limites de Execução")
-max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, 90) / 100.0
+max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, 30) / 100.0
 max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, 10) / 100.0
 
 st.sidebar.subheader("⏱️ Cinemática (Radar)")
@@ -320,11 +320,11 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE (4 DIMENSÕES)
+    # ABA 3: OTIMIZADOR DE GRADE (5 DIMENSÕES)
     # ==========================================
-    elif aba_selecionada == "🔥 Otimizador de Grade (4D)":
-        st.title("🔥 Otimizador de Hiperparâmetros (4D)")
-        st.markdown("O algoritmo varrerá dezenas de combinações cruzando **Janelas, Moduladores, Tetos de Compra e Tetos de Venda** simultaneamente para encontrar o Ponto Ótimo (*Sweet Spot*) da sua tese institucional.")
+    elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
+        st.title("🔥 Otimizador de Matriz 5D")
+        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas**.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         with c_fin1: start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
@@ -332,19 +332,18 @@ if df_hist is not None:
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal", min_value=0.0, value=250.0, step=50.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
-        if st.button("🚀 Processar Força Bruta (Executar Centenas de Backtests)", use_container_width=True):
-            with st.spinner("Compilando matriz de cruzamento 4D... (Otimização Numérica Ativada)"):
+        if st.button("🚀 Processar Matriz 5D", use_container_width=True):
+            with st.spinner("Computando 243 backtests vetoriais. Por favor, aguarde..."):
                 
-                # Arrays para o Grid Search
-                janelas_teste = [3, 7, 14, 21]
-                sensibilidades_teste = [1.0, 3.0, 5.0, 7.0]
-                compras_teste = [0.3, 0.6, 0.9] # 30%, 60%, 90%
-                vendas_teste = [0.1, 0.3, 0.6]  # 10%, 30%, 60%
+                # Matriz 5D
+                janelas_teste = [3, 7, 14]
+                riscos_teste = [1.0, 3.0, 5.0]           # Agressividade Base
+                sensibilidades_teste = [1.0, 5.0, 9.0]   # Força do Modulador
+                compras_teste = [0.3, 0.6, 0.9]
+                vendas_teste = [0.1, 0.3, 0.6] 
                 
-                # Produto Cartesiano (4 * 4 * 3 * 3 = 144 Cenários)
-                combinacoes = list(itertools.product(janelas_teste, sensibilidades_teste, compras_teste, vendas_teste))
+                combinacoes = list(itertools.product(janelas_teste, riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
                 
-                # Extraindo dados em formato puro (Numpy Array) para processamento em milissegundos
                 mercado_arr = df_plot['Mercado'].values
                 oem_arr = df_plot['OEM'].values
                 meses_arr = df_plot['Data'].dt.month.values
@@ -352,10 +351,8 @@ if df_hist is not None:
                 
                 resultados = []
 
-                # O Motor de Processamento Vetorial
-                for jan_t, sens_t, max_b, max_s in combinacoes:
+                for jan_t, ris_t, sens_t, max_b, max_s in combinacoes:
                     der_arr = pd.Series(mercado_arr).pct_change(periods=jan_t).fillna(0).values
-                    
                     cx = start_usd
                     bt = start_btc
                     tot_inv = start_usd + (start_btc * mercado_arr[0])
@@ -363,22 +360,17 @@ if df_hist is not None:
                     pat = np.zeros(n_dias)
                     
                     for i in range(n_dias):
-                        m_curr = mercado_arr[i]
-                        o_curr = oem_arr[i]
-                        mth = meses_arr[i]
-                        der = der_arr[i]
+                        m_curr, o_curr, mth, der = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i]
                         
                         if mth != mes_ant:
-                            cx += aporte_mensal
-                            tot_inv += aporte_mensal
-                            mes_ant = mth
+                            cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
                             
                         dlt = (o_curr - m_curr) / o_curr
                         
                         if cx > 5:
                             if dlt > 0.02:
                                 mc = max(0.2, min(1 - (der * sens_t), 2.0))
-                                vc = cx * min(max_b, (dlt * (risco/2)) * mc)
+                                vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
                                 if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
                             elif dlt > -0.10:
                                 vc = cx * 0.01
@@ -386,12 +378,11 @@ if df_hist is not None:
                                 
                         if bt > 0 and dlt <= -0.10:
                             mv = max(0.2, min(1 + (der * sens_t), 2.0))
-                            qv = bt * min(max_s, (abs(dlt) * (risco/2)) * mv)
+                            qv = bt * min(max_s, (abs(dlt) * (ris_t/2)) * mv)
                             if qv > 0: cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
                                 
                         pat[i] = cx + (bt * m_curr)
                         
-                    # Calculando métricas desse cenário
                     rets = pd.Series(pat).pct_change().dropna()
                     ret_neg = rets[rets < 0]
                     sortino_val = (rets.mean() / ret_neg.std()) * np.sqrt(365) if len(ret_neg)>0 and ret_neg.std()>0 else 0
@@ -399,47 +390,62 @@ if df_hist is not None:
                     
                     resultados.append({
                         "Janela (Dias)": jan_t,
-                        "Sensibilidade": sens_t,
+                        "Agressividade Base": ris_t,
+                        "Força do Modulador": sens_t,
                         "Teto Compra (%)": f"{max_b*100:.0f}%",
                         "Teto Venda (%)": f"{max_s*100:.0f}%",
                         "Índice Sortino": round(sortino_val, 2),
-                        "Retorno Líquido (%)": round(roi_val, 1)
+                        "Retorno (%)": round(roi_val, 1)
                     })
                     
                 df_res = pd.DataFrame(resultados)
                 df_res = df_res.sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
                 
-                st.success(f"✅ Processamento Concluído! O computador rodou {len(combinacoes)} cenários paralelos com sucesso.")
+                st.success(f"✅ Processamento Concluído! O computador rodou {len(combinacoes)} cenários com sucesso.")
                 
-                # --- PÓDIO DE RESULTADOS ---
-                st.markdown("### 🏆 Top 5 Melhores Configurações (Ranking por Risco-Retorno)")
+                st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
                 st.dataframe(df_res.head(5), use_container_width=True)
                 
                 st.markdown("---")
-                st.markdown("### 🗺️ Matrizes Térmicas de Decisão (Heatmaps)")
+                st.markdown("### 🗺️ Matrizes Térmicas e Pontos Ótimos (Sweet Spots)")
                 
-                # Para cruzar os dados, agrupamos pegando o melhor Sortino daquele cruzamento
-                c_h1, c_h2 = st.columns(2)
+                c_h1, c_h2, c_h3 = st.columns(3)
                 
+                def get_best_point(pivot_df):
+                    c_max = pivot_df.max().idxmax()
+                    r_max = pivot_df[c_max].idxmax()
+                    v_max = pivot_df.loc[r_max, c_max]
+                    return r_max, c_max, v_max
+
+                # HEATMAP 1: Agressividade vs Modulador
                 with c_h1:
-                    pivot_cin = df_res.pivot_table(index='Sensibilidade', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
-                    fig_h1 = go.Figure(data=go.Heatmap(
-                        z=pivot_cin.values, x=[f"{c}d" for c in pivot_cin.columns], y=[f"Força {i}" for i in pivot_cin.index],
-                        colorscale='Viridis', text=np.round(pivot_cin.values, 2), texttemplate="%{text}",
-                        hovertemplate='Janela: %{x}<br>Sensibilidade: %{y}<br>Max Sortino: %{z}<extra></extra>'
-                    ))
-                    fig_h1.update_layout(template="plotly_dark", title="Calibragem do Radar (Tempo vs Força)", height=450)
-                    st.plotly_chart(fig_h1, use_container_width=True)
+                    pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Índice Sortino', aggfunc='max')
+                    r_bst, c_bst, v_bst = get_best_point(pivot_1)
                     
+                    fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
+                    fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=400)
+                    st.plotly_chart(fig_h1, use_container_width=True)
+                    st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
+                    
+                # HEATMAP 2: Janela vs Modulador
                 with c_h2:
-                    pivot_bolso = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
-                    fig_h2 = go.Figure(data=go.Heatmap(
-                        z=pivot_bolso.values, x=pivot_bolso.columns, y=pivot_bolso.index,
-                        colorscale='Magma', text=np.round(pivot_bolso.values, 2), texttemplate="%{text}",
-                        hovertemplate='Compra Máx: %{x}<br>Venda Máx: %{y}<br>Max Sortino: %{z}<extra></extra>'
-                    ))
-                    fig_h2.update_layout(template="plotly_dark", title="Calibragem de Bolso (Desespero vs Euforia)", height=450)
+                    pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
+                    r_bst, c_bst, v_bst = get_best_point(pivot_2)
+                    
+                    fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
+                    fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=400)
                     st.plotly_chart(fig_h2, use_container_width=True)
+                    st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
+
+                # HEATMAP 3: Compra vs Venda
+                with c_h3:
+                    pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
+                    r_bst, c_bst, v_bst = get_best_point(pivot_3)
+                    
+                    fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
+                    fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=400)
+                    st.plotly_chart(fig_h3, use_container_width=True)
+                    st.warning(f"**📍 Ponto de Ouro:**\nCompra **{c_bst}** e Venda **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
