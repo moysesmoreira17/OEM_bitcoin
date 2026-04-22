@@ -336,7 +336,7 @@ if df_hist is not None:
             with st.spinner("Computando 1.800 backtests vetoriais. A força bruta foi ativada, aguarde..."):
                 
                 # Matriz 5D de Ultra Resolução (Granularidade Máxima no Modulador)
-                janelas_teste = [3, 7, 14, 21]
+                janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
                 
                 # --- SUA EXIGÊNCIA AQUI: Modulador de 1 a 10 ---
