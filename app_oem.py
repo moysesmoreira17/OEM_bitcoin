@@ -109,7 +109,7 @@ def buscar_dxy_live():
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (5D)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
-risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 3.0, step=0.5)
+risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 1.0, step=0.5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("💼 Seu Portfólio Live")
@@ -122,8 +122,8 @@ max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, 30) / 100.0
 max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, 10) / 100.0
 
 st.sidebar.subheader("⏱️ Cinemática (Radar)")
-janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 7)
-sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, 5.0, step=0.5)
+janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 3)
+sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, 7.0, step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
