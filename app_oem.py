@@ -12,10 +12,19 @@ import numpy as np
 import itertools 
 
 # ==========================================
-# 1. CONFIGURAÇÃO E DADOS BASE
+# 0. MEMÓRIA DE SESSÃO (PARA AUTOMAÇÃO DA SIDEBAR)
 # ==========================================
 st.set_page_config(page_title="Terminal Quantitativo OEM", layout="wide")
 
+if 'opt_risco' not in st.session_state: st.session_state.opt_risco = 3.0
+if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 7
+if 'opt_sens' not in st.session_state: st.session_state.opt_sens = 5.0
+if 'opt_buy' not in st.session_state: st.session_state.opt_buy = 90
+if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
+
+# ==========================================
+# 1. CONFIGURAÇÃO E DADOS BASE
+# ==========================================
 FRED_API_KEY = st.secrets["FRED_API_KEY"]
 
 DATA_HALVING = datetime(2024, 4, 19)
@@ -104,12 +113,14 @@ def buscar_dxy_live():
     except: return 100.0 
 
 # ==========================================
-# 2. INTERFACE E SIDEBAR 
+# 2. INTERFACE E SIDEBAR (CONECTADA À MEMÓRIA)
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (5D)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
-risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 1.0, step=0.5)
+
+# Os sliders agora nascem com os valores guardados na memória (session_state)
+risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, float(st.session_state.opt_risco), step=0.5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("💼 Seu Portfólio Live")
@@ -118,12 +129,12 @@ saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", min_value=0.0, val
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Limites de Execução")
-max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, 30) / 100.0
-max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, 10) / 100.0
+max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, int(st.session_state.opt_buy)) / 100.0
+max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, int(st.session_state.opt_sell)) / 100.0
 
 st.sidebar.subheader("⏱️ Cinemática (Radar)")
-janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, 3)
-sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, 7.0, step=0.5)
+janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_state.opt_janela))
+sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -320,11 +331,11 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE (ULTRA RESOLUÇÃO)
+    # ABA 3: OTIMIZADOR DE GRADE E APLICAÇÃO LIVE
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
         st.title("🔥 Otimizador de Matriz 5D (Ultra Resolução)")
-        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas**. *(Nota: Os sliders da barra lateral são ignorados nesta aba, pois o robô testa todos os cenários automaticamente).*")
+        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas** para encontrar o maior Índice Sortino.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         with c_fin1: start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
@@ -334,20 +345,14 @@ if df_hist is not None:
 
         if st.button("🚀 Processar Matriz de Ultra Resolução", use_container_width=True):
             with st.spinner("Computando 1.800 backtests vetoriais. A força bruta foi ativada, aguarde..."):
-                
-                # Matriz 5D de Ultra Resolução (Granularidade Máxima no Modulador)
                 janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
-                
-                # --- SUA EXIGÊNCIA AQUI: Modulador de 1 a 10 ---
                 sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
-                
                 compras_teste = [0.3, 0.6, 0.9]
                 vendas_teste = [0.1, 0.3, 0.6] 
                 
                 combinacoes = list(itertools.product(janelas_teste, riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
                 
-                # Extraindo dados para numpy
                 mercado_arr = df_plot['Mercado'].values
                 oem_arr = df_plot['OEM'].values
                 meses_arr = df_plot['Data'].dt.month.values
@@ -357,18 +362,13 @@ if df_hist is not None:
 
                 for jan_t, ris_t, sens_t, max_b, max_s in combinacoes:
                     der_arr = pd.Series(mercado_arr).pct_change(periods=jan_t).fillna(0).values
-                    cx = start_usd
-                    bt = start_btc
+                    cx, bt, mes_ant = start_usd, start_btc, meses_arr[0]
                     tot_inv = start_usd + (start_btc * mercado_arr[0])
-                    mes_ant = meses_arr[0]
                     pat = np.zeros(n_dias)
                     
                     for i in range(n_dias):
                         m_curr, o_curr, mth, der = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i]
-                        
-                        if mth != mes_ant:
-                            cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
-                            
+                        if mth != mes_ant: cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
                         dlt = (o_curr - m_curr) / o_curr
                         
                         if cx > 5:
@@ -377,8 +377,7 @@ if df_hist is not None:
                                 vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
                                 if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
                             elif dlt > -0.10:
-                                vc = cx * 0.01
-                                bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                                vc = cx * 0.01; bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
                                 
                         if bt > 0 and dlt <= -0.10:
                             mv = max(0.2, min(1 + (der * sens_t), 2.0))
@@ -393,61 +392,60 @@ if df_hist is not None:
                     roi_val = ((pat[-1] - tot_inv) / tot_inv) * 100 if tot_inv > 0 else 0
                     
                     resultados.append({
-                        "Janela (Dias)": jan_t,
-                        "Agressividade Base": ris_t,
-                        "Força do Modulador": sens_t,
-                        "Teto Compra (%)": f"{max_b*100:.0f}%",
-                        "Teto Venda (%)": f"{max_s*100:.0f}%",
-                        "Índice Sortino": round(sortino_val, 2),
-                        "Retorno (%)": round(roi_val, 1)
+                        "Janela (Dias)": jan_t, "Agressividade Base": ris_t, "Força do Modulador": sens_t,
+                        "Teto Compra (%)": f"{max_b*100:.0f}%", "Teto Venda (%)": f"{max_s*100:.0f}%",
+                        "Índice Sortino": round(sortino_val, 2), "Retorno (%)": round(roi_val, 1)
                     })
                     
-                df_res = pd.DataFrame(resultados)
-                df_res = df_res.sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
-                
-                st.success(f"✅ Processamento Concluído! O computador testou {len(combinacoes)} cenários simultâneos (Matriz de 1.800 quadrantes).")
-                
-                st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
-                st.dataframe(df_res.head(5), use_container_width=True)
-                
-                st.markdown("---")
-                st.markdown("### 🗺️ Matrizes Térmicas e Pontos Ótimos (Sweet Spots)")
-                
-                c_h1, c_h2, c_h3 = st.columns(3)
-                
-                # Função para extrair a coordenada campeã
-                def get_best_point(pivot_df):
-                    c_max = pivot_df.max().idxmax()
-                    r_max = pivot_df[c_max].idxmax()
-                    v_max = pivot_df.loc[r_max, c_max]
-                    return r_max, c_max, v_max
+                df_res = pd.DataFrame(resultados).sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
+                st.session_state.df_res_otimizado = df_res # Salva na memória para não sumir
 
-                with c_h1:
-                    pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Índice Sortino', aggfunc='max')
-                    r_bst, c_bst, v_bst = get_best_point(pivot_1)
-                    
-                    fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
-                    fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
-                    st.plotly_chart(fig_h1, use_container_width=True)
-                    st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
-                    
-                with c_h2:
-                    pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
-                    r_bst, c_bst, v_bst = get_best_point(pivot_2)
-                    
-                    fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
-                    fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
-                    st.plotly_chart(fig_h2, use_container_width=True)
-                    st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
+        # Se existir resultado salvo na memória, desenha na tela
+        if 'df_res_otimizado' in st.session_state:
+            df_res = st.session_state.df_res_otimizado
+            
+            st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
+            st.dataframe(df_res.head(5), use_container_width=True)
+            
+            # --- O BOTÃO MÁGICO DE EXPORTAÇÃO ---
+            st.markdown("---")
+            st.markdown("### ⚡ Automação Live")
+            if st.button("🎯 Exportar Configuração #1 para o Menu Lateral (Modo Live)", type="primary", use_container_width=True):
+                st.session_state.opt_janela = int(df_res.iloc[0]["Janela (Dias)"])
+                st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
+                st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
+                st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"].replace('%',''))
+                st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"].replace('%',''))
+                st.rerun() # Dá um "F5" no app e atualiza todos os sliders na hora!
+            
+            st.markdown("---")
+            st.markdown("### 🗺️ Matrizes Térmicas e Pontos Ótimos")
+            
+            c_h1, c_h2, c_h3 = st.columns(3)
+            def get_best_point(pivot_df):
+                c_max = pivot_df.max().idxmax()
+                r_max = pivot_df[c_max].idxmax()
+                v_max = pivot_df.loc[r_max, c_max]
+                return r_max, c_max, v_max
 
-                with c_h3:
-                    pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
-                    r_bst, c_bst, v_bst = get_best_point(pivot_3)
-                    
-                    fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
-                    fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
-                    st.plotly_chart(fig_h3, use_container_width=True)
-                    st.warning(f"**📍 Ponto de Ouro:**\nCompra **{c_bst}** e Venda **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
+            with c_h1:
+                pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Índice Sortino', aggfunc='max')
+                r_bst, c_bst, v_bst = get_best_point(pivot_1)
+                fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
+                fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
+                st.plotly_chart(fig_h1, use_container_width=True)
+                
+            with c_h2:
+                pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
+                fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
+                fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
+                st.plotly_chart(fig_h2, use_container_width=True)
+
+            with c_h3:
+                pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
+                fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
+                fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
+                st.plotly_chart(fig_h3, use_container_width=True)
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
