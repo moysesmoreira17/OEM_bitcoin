@@ -120,7 +120,7 @@ def buscar_dxy_live():
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo de Operação", ["Monitoramento Live", "Prova Matemática (Backtest)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
-risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 3.0, step=0.5)
+risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, 2.0, step=0.5)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("💼 Seu Portfólio Live")
