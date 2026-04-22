@@ -21,6 +21,7 @@ if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 7
 if 'opt_sens' not in st.session_state: st.session_state.opt_sens = 5.0
 if 'opt_buy' not in st.session_state: st.session_state.opt_buy = 90
 if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
+if 'opt_zscore' not in st.session_state: st.session_state.opt_zscore = 4.0
 
 # ==========================================
 # 1. CONFIGURAÇÃO E DADOS BASE
@@ -40,7 +41,7 @@ def carregar_dados_mercado(meses):
     try:
         hoje = datetime.now()
         inicio = hoje - relativedelta(months=meses)
-        inicio_query = inicio - relativedelta(days=40) 
+        inicio_query = inicio - relativedelta(days=400) # Busca ampliada para a média de 365d do Z-Score
         inicio_str = inicio_query.strftime('%Y-%m-%d')
         
         url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFII10&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
@@ -66,7 +67,7 @@ def carregar_dados_mercado(meses):
             start_ms = resp_b[-1][0] + 86400000 
             time.sleep(0.3) 
 
-        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+2}months&format=json&sampled=true"
+        url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+14}months&format=json&sampled=true"
         resp_d = requests.get(url_d).json().get('values', [])
 
         try:
@@ -78,7 +79,6 @@ def carregar_dados_mercado(meses):
             df_dxy = pd.DataFrame(columns=['DXY'])
             df_dxy.index.name = 'date'
 
-        # --- NOVA COLETA: CÂMBIO USD/BRL ---
         try:
             brl_raw = yf.Ticker("BRL=X").history(start=inicio_str)[['Close']]
             brl_raw.index = brl_raw.index.tz_localize(None).normalize()
@@ -100,7 +100,6 @@ def carregar_dados_mercado(meses):
         df_diff = pd.DataFrame([{"date": datetime.fromtimestamp(p['x']), "Diff": p['y']/1e12} for p in resp_d])
         df_diff['date'] = pd.to_datetime(df_diff['date'])
 
-        # Join incluindo o BRL
         df_final = df_j.set_index('date').join(
                    df_m.set_index('date'), how='outer').join(
                    df_dxy, how='outer').join(
@@ -108,7 +107,15 @@ def carregar_dados_mercado(meses):
                    df_btc.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer').ffill().dropna()
         
-        df_final = df_final[df_final.index >= pd.to_datetime(inicio.strftime('%Y-%m-%d'))]
+        # O cálculo do Z-Score exige histórico. Fazemos o cálculo antes do corte de visualização.
+        # Usa-se a cotação em USD para medir a saúde da rede de forma neutra cambial
+        df_final['Mercado_USD'] = df_final['Preco']
+        df_final['Baseline_365d'] = df_final['Mercado_USD'].rolling(window=365, min_periods=30).mean()
+        df_final['Std_365d'] = df_final['Mercado_USD'].rolling(window=365, min_periods=30).std()
+        df_final['Z_Score'] = ((df_final['Mercado_USD'] - df_final['Baseline_365d']) / df_final['Std_365d']).fillna(0)
+
+        # Corta apenas para a janela selecionada
+        df_final = df_final[df_final.index >= pd.to_datetime((hoje - relativedelta(months=meses)).strftime('%Y-%m-%d'))]
         return df_final
     except Exception as e:
         st.error(f"🛑 Erro de Coleta: {e}")
@@ -147,9 +154,11 @@ st.sidebar.subheader("🛡️ Limites de Execução")
 max_buy_pct = st.sidebar.slider("Teto de Compra (% Máx)", 1, 100, int(st.session_state.opt_buy)) / 100.0
 max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, int(st.session_state.opt_sell)) / 100.0
 
-st.sidebar.subheader("⏱️ Cinemática (Radar)")
+st.sidebar.subheader("⏱️ Radares de Saturação")
 janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_state.opt_janela))
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
+# NOVO DISJUNTOR Z-SCORE
+z_score_limite = st.sidebar.slider("Teto MVRV Z-Score (Disjuntor)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -168,19 +177,18 @@ if df_hist is not None:
         f_esc = 1 + (0.02 * max(0, (d - DATA_PICO_EXCHANGES).days/365.25)) 
         den = max(0.1, r['Juro'] + DELTA)
         
-        # Matemática Baseada em USD
         p_oem_usd = ALPHA * (liq_e/den) * f_ciclo * r['Diff'] * f_esc * fator_dxy
-        
-        # Conversão Câmbio Histórico
         brl_rate = r['BRL'] if 'BRL' in r and not pd.isna(r['BRL']) else 5.0
         p_oem_brl = p_oem_usd * brl_rate
         mercado_brl = r['Preco'] * brl_rate
         
-        dados_oem.append({"Data": d, "OEM": p_oem_brl, "OEM_USD": p_oem_usd, "Mercado": mercado_brl, "DXY": dxy_atual, "BRL": brl_rate})
+        dados_oem.append({
+            "Data": d, "OEM": p_oem_brl, "OEM_USD": p_oem_usd, "Mercado": mercado_brl, 
+            "DXY": dxy_atual, "BRL": brl_rate, "Z_Score": r['Z_Score']
+        })
     
     df_plot = pd.DataFrame(dados_oem)
     df_plot['1_DXY'] = 1 / df_plot['DXY']
-    # A Derivada agora mede a velocidade do Bitcoin EM REAIS (capturando crise cambial)
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
     df_plot['MA_1_DXY'] = df_plot['1_DXY'].rolling(window=janela_cin).mean()
 
@@ -203,16 +211,24 @@ if df_hist is not None:
 
         u = df_plot.iloc[-1]
         
-        # Correção macro da base em Dólar e conversão simultânea para Real Live
         fator_dxy_live = 100.0 / max(50.0, dxy_agora)
         oem_corrigido_usd = u['OEM_USD'] * (fator_dxy_live / (100.0 / max(50.0, u['DXY']))) if u['DXY'] != dxy_agora else u['OEM_USD']
         oem_corrigido_brl = oem_corrigido_usd * brl_agora
         
         delta = (oem_corrigido_brl - u['Mercado']) / oem_corrigido_brl
         derivada_live = u['dBTC_dt']
+        z_score_live = u['Z_Score']
+        
         acao_cor = "white"
         
-        if delta > 0.02:
+        # --- A NOVA FÍSICA DO DISJUNTOR Z-SCORE ---
+        if z_score_live >= z_score_limite:
+            status = "🚨 SATURAÇÃO MVRV (FUGA FORÇADA)"
+            porcentagem = max_sell_pct  # Força a venda máxima permitida
+            qtd_venda = saldo_btc * porcentagem
+            recomendacao = f"Bolha Sistêmica: Venda {qtd_venda:.4f} BTC Imediatamente (~R$ {qtd_venda * u['Mercado']:,.2f})"
+            acao_cor = "#FF00FF" # Magenta piscante
+        elif delta > 0.02:
             modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade), 2.0))
             forca_compra = (delta * (risco / 2)) * modulador_compra
             porcentagem = min(max_buy_pct, forca_compra) 
@@ -235,23 +251,29 @@ if df_hist is not None:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Preço Justo (OEM BRL)", f"R$ {oem_corrigido_brl:,.0f}")
         c2.metric("Preço Mercado (BRL)", f"R$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
-        c3.metric("Câmbio (USD/BRL)", f"R$ {brl_agora:.2f}", f"Cinemática {janela_cin}d: {derivada_live*100:.1f}%", delta_color="off")
+        # Agora o Z-Score ganhou destaque no visor
+        c3.metric("Risco Z-Score", f"{z_score_live:.2f}", f"Disjuntor em {z_score_limite:.1f}", delta_color="inverse")
         
         with c4:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
+        # Gráfico Principal
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), secondary_y=False)
-        
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Bruto)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.3), secondary_y=True)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['MA_1_DXY'], name=f'Tendência Liquidez ({janela_cin}d)', line=dict(color='#00FFFF', width=2)), secondary_y=True)
-
-        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
-        fig.update_yaxes(title_text="Preço (BRL)", secondary_y=False)
-        fig.update_yaxes(title_text="Índice Liquidez 1/DXY", secondary_y=True, showgrid=False) 
+        fig.update_layout(template="plotly_dark", height=500, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Gráfico de Calor (Z-Score)
+        st.markdown("### 🌡️ Termômetro de Saturação (MVRV Z-Score Proxy)")
+        fig_z = go.Figure()
+        fig_z.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')))
+        fig_z.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text=f"Disjuntor de Fuga ({z_score_limite})")
+        fig_z.update_layout(template="plotly_dark", height=250, margin=dict(l=0, r=0, t=20, b=0))
+        st.plotly_chart(fig_z, use_container_width=True)
 
     # ==========================================
     # ABA 2: BACKTEST 
@@ -260,7 +282,7 @@ if df_hist is not None:
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        with c_fin1: start_brl = st.number_input("Caixa Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
@@ -274,43 +296,41 @@ if df_hist is not None:
         total_investido_oem = start_brl + (start_btc * preco_compra_bnh)
         
         patrimonio_hist_oem, hist_caixa, hist_valor_btc, patrimonio_hist_bnh = [], [], [], []
-        compras_x, compras_y, vendas_x, vendas_y = [], [], [], []
         mes_anterior = df_plot.iloc[0]['Data'].month
 
         for _, row in df_plot.iterrows():
             p_mercado, p_justo, data_atual = row['Mercado'], row['OEM'], row['Data']
             derivada_btc = row['dBTC_dt']
             delta = (p_justo - p_mercado) / p_justo
+            z_curr = row['Z_Score']
             
             if data_atual.month != mes_anterior:
                 caixa_oem += aporte_mensal; total_investido_oem += aporte_mensal
                 qtd_btc_bnh += (aporte_mensal * (1 - taxa_corretora)) / p_mercado; total_investido_bnh += aporte_mensal
                 mes_anterior = data_atual.month
             
-            if delta > 0.02: 
-                compras_x.append(data_atual); compras_y.append(p_mercado)
-            elif delta <= -0.10: 
-                vendas_x.append(data_atual); vendas_y.append(p_mercado)
-                
-            # Mínimo de R$ 30 no caixa para operar
-            if caixa_oem > 30: 
-                if delta > 0.02: 
-                    mod_c = max(0.2, min(1 - (derivada_btc * sensibilidade), 2.0))
-                    v_compra = caixa_oem * min(max_buy_pct, (delta * (risco / 2)) * mod_c)
-                elif delta > -0.10: v_compra = caixa_oem * 0.01 
-                else: v_compra = 0
-                
-                if v_compra > 0:
-                    btc_oem += (v_compra * (1 - taxa_corretora)) / p_mercado; caixa_oem -= v_compra
-                
-            if btc_oem > 0:
-                if delta <= -0.10: 
+            # --- OVERRIDE DE SATURAÇÃO Z-SCORE ---
+            if z_curr >= z_score_limite and btc_oem > 0:
+                q_vender = btc_oem * max_sell_pct  # Despeja pesado sem perguntar
+                caixa_oem += (q_vender * p_mercado) * (1 - taxa_corretora)
+                btc_oem -= q_vender
+            else:
+                # Lógica Normal se a rede não estiver saturada
+                if caixa_oem > 30: 
+                    if delta > 0.02: 
+                        mod_c = max(0.2, min(1 - (derivada_btc * sensibilidade), 2.0))
+                        v_compra = caixa_oem * min(max_buy_pct, (delta * (risco / 2)) * mod_c)
+                    elif delta > -0.10: v_compra = caixa_oem * 0.01 
+                    else: v_compra = 0
+                    
+                    if v_compra > 0:
+                        btc_oem += (v_compra * (1 - taxa_corretora)) / p_mercado; caixa_oem -= v_compra
+                    
+                if btc_oem > 0 and delta <= -0.10:
                     mod_v = max(0.2, min(1 + (derivada_btc * sensibilidade), 2.0))
                     q_vender = btc_oem * min(max_sell_pct, (abs(delta) * (risco / 2)) * mod_v)
-                else: q_vender = 0
-                
-                if q_vender > 0:
-                    caixa_oem += (q_vender * p_mercado) * (1 - taxa_corretora); btc_oem -= q_vender
+                    if q_vender > 0:
+                        caixa_oem += (q_vender * p_mercado) * (1 - taxa_corretora); btc_oem -= q_vender
                 
             hist_caixa.append(caixa_oem)
             hist_valor_btc.append(btc_oem * p_mercado)
@@ -349,7 +369,7 @@ if df_hist is not None:
             st.metric("Risco (Drawdown Máx)", f"{dd_bnh:.1f}%", delta_color="inverse")
             st.metric("Sharpe | Sortino", f"{sharpe_bnh:.2f} | {sortino_bnh:.2f}") 
         with c2:
-            st.subheader("Teoria OEM (Ativo)")
+            st.subheader("Teoria OEM (Ativo + Z-Score)")
             st.metric("Retorno Líquido", f"{lucro_oem:.1f}%")
             st.metric("Risco (Drawdown Máx)", f"{dd_oem:.1f}%", delta_color="inverse")
             st.metric("Sharpe | Sortino", f"{sharpe_oem:.2f} | {sortino_oem:.2f}") 
@@ -370,17 +390,17 @@ if df_hist is not None:
     # ABA 3: OTIMIZADOR DE GRADE
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
-        st.title("🔥 Otimizador de Matriz 5D (Ultra Resolução)")
-        st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas** para maximizar o Índice Sortino.")
+        st.title("🔥 Otimizador de Matriz 5D")
+        st.markdown("O Otimizador varre as 5 variáveis vitais. O seu limite de Z-Score da barra lateral atua como um 'Disjuntor Global' durante este teste para medir a eficácia da proteção contra bolhas.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        with c_fin1: start_brl = st.number_input("Caixa Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
-        if st.button("🚀 Processar Matriz de Ultra Resolução", use_container_width=True):
-            with st.spinner("Computando 1.800 backtests vetoriais. A força bruta foi ativada, aguarde..."):
+        if st.button("🚀 Processar Matriz Quantitativa", use_container_width=True):
+            with st.spinner("Computando backtests vetoriais com freio Z-Score. Aguarde..."):
                 janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
                 sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
@@ -392,6 +412,7 @@ if df_hist is not None:
                 mercado_arr = df_plot['Mercado'].values
                 oem_arr = df_plot['OEM'].values
                 meses_arr = df_plot['Data'].dt.month.values
+                z_arr = df_plot['Z_Score'].values
                 n_dias = len(mercado_arr)
                 
                 resultados = []
@@ -403,22 +424,27 @@ if df_hist is not None:
                     pat = np.zeros(n_dias)
                     
                     for i in range(n_dias):
-                        m_curr, o_curr, mth, der = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i]
+                        m_curr, o_curr, mth, der, z_curr = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i], z_arr[i]
                         if mth != mes_ant: cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
                         dlt = (o_curr - m_curr) / o_curr
                         
-                        if cx > 30:
-                            if dlt > 0.02:
-                                mc = max(0.2, min(1 - (der * sens_t), 2.0))
-                                vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
-                                if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
-                            elif dlt > -0.10:
-                                vc = cx * 0.01; bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
-                                
-                        if bt > 0 and dlt <= -0.10:
-                            mv = max(0.2, min(1 + (der * sens_t), 2.0))
-                            qv = bt * min(max_s, (abs(dlt) * (ris_t/2)) * mv)
-                            if qv > 0: cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
+                        # Z-SCORE OVERRIDE NO MOTOR OTIMIZADOR
+                        if z_curr >= z_score_limite and bt > 0:
+                            qv = bt * max_s
+                            cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
+                        else:
+                            if cx > 30:
+                                if dlt > 0.02:
+                                    mc = max(0.2, min(1 - (der * sens_t), 2.0))
+                                    vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
+                                    if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                                elif dlt > -0.10:
+                                    vc = cx * 0.01; bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                                    
+                            if bt > 0 and dlt <= -0.10:
+                                mv = max(0.2, min(1 + (der * sens_t), 2.0))
+                                qv = bt * min(max_s, (abs(dlt) * (ris_t/2)) * mv)
+                                if qv > 0: cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
                                 
                         pat[i] = cx + (bt * m_curr)
                         
@@ -438,12 +464,10 @@ if df_hist is not None:
 
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado
-            
             st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
             st.dataframe(df_res.head(5), use_container_width=True)
             
             st.markdown("---")
-            st.markdown("### ⚡ Automação Live")
             if st.button("🎯 Exportar Configuração #1 para o Menu Lateral", type="primary", use_container_width=True):
                 st.session_state.opt_janela = int(df_res.iloc[0]["Janela (Dias)"])
                 st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
@@ -451,9 +475,6 @@ if df_hist is not None:
                 st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"].replace('%',''))
                 st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"].replace('%',''))
                 st.rerun() 
-            
-            st.markdown("---")
-            st.markdown("### 🗺️ Matrizes Térmicas e Pontos Ótimos")
             
             c_h1, c_h2, c_h3 = st.columns(3)
             def get_best_point(pivot_df):
@@ -468,23 +489,18 @@ if df_hist is not None:
                 fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
                 fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
                 st.plotly_chart(fig_h1, use_container_width=True)
-                st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
                 
             with c_h2:
                 pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
-                r_bst, c_bst, v_bst = get_best_point(pivot_2)
                 fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
                 fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
                 st.plotly_chart(fig_h2, use_container_width=True)
-                st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
             with c_h3:
                 pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
-                r_bst, c_bst, v_bst = get_best_point(pivot_3)
                 fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
                 fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
                 st.plotly_chart(fig_h3, use_container_width=True)
-                st.warning(f"**📍 Ponto de Ouro:**\nCompra **{c_bst}** e Venda **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
