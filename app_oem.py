@@ -12,7 +12,7 @@ import numpy as np
 import itertools 
 
 # ==========================================
-# 0. MEMÓRIA DE SESSÃO (PARA AUTOMAÇÃO DA SIDEBAR)
+# 0. MEMÓRIA DE SESSÃO (AUTOMAÇÃO DA SIDEBAR)
 # ==========================================
 st.set_page_config(page_title="Terminal Quantitativo OEM", layout="wide")
 
@@ -119,7 +119,7 @@ st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (5D)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 
-# Os sliders agora nascem com os valores guardados na memória (session_state)
+# Sliders instanciados com a Memória de Sessão
 risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, float(st.session_state.opt_risco), step=0.5)
 
 st.sidebar.markdown("---")
@@ -158,6 +158,9 @@ if df_hist is not None:
     df_plot = pd.DataFrame(dados_oem)
     df_plot['1_DXY'] = 1 / df_plot['DXY']
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
+    
+    # Nova Média Móvel de Liquidez
+    df_plot['MA_1_DXY'] = df_plot['1_DXY'].rolling(window=janela_cin).mean()
 
     # ==========================================
     # ABA 1: MONITORAMENTO LIVE
@@ -212,7 +215,11 @@ if df_hist is not None:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=3)), secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado', line=dict(color='white', width=1.5, dash='dash')), secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY', line=dict(color='#00BFFF', width=1.5, dash='dot'), opacity=0.6), secondary_y=True)
+        
+        # Média Móvel de Liquidez no Gráfico
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Bruto)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.3), secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['MA_1_DXY'], name=f'Tendência Liquidez ({janela_cin}d)', line=dict(color='#00FFFF', width=2)), secondary_y=True)
+
         fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço (USD)", secondary_y=False)
         fig.update_yaxes(title_text="Índice 1/DXY", secondary_y=True, showgrid=False) 
@@ -225,7 +232,7 @@ if df_hist is not None:
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_usd = st.number_input("Valor investido (USD)", min_value=0.0, value=1000.0, step=100.0)
+        with c_fin1: start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (Salário)", min_value=0.0, value=250.0, step=50.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
@@ -331,20 +338,22 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE E APLICAÇÃO LIVE
+    # ABA 3: OTIMIZADOR DE GRADE (ULTRA RESOLUÇÃO)
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
         st.title("🔥 Otimizador de Matriz 5D (Ultra Resolução)")
         st.markdown("O algoritmo varrerá a interação simultânea entre **Janela, Agressividade (Risco), Modulador, Compras e Vendas** para encontrar o maior Índice Sortino.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_usd = st.number_input("Valor investido (USD)", min_value=0.0, value=1000.0, step=100.0)
+        with c_fin1: start_usd = st.number_input("Caixa Inicial (USD)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal", min_value=0.0, value=250.0, step=50.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
         if st.button("🚀 Processar Matriz de Ultra Resolução", use_container_width=True):
             with st.spinner("Computando 1.800 backtests vetoriais. A força bruta foi ativada, aguarde..."):
+                
+                # Matriz 5D com a Nova Exigência de Tempo (Longo Prazo)
                 janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
                 sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
@@ -398,9 +407,9 @@ if df_hist is not None:
                     })
                     
                 df_res = pd.DataFrame(resultados).sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
-                st.session_state.df_res_otimizado = df_res # Salva na memória para não sumir
+                st.session_state.df_res_otimizado = df_res 
 
-        # Se existir resultado salvo na memória, desenha na tela
+        # Desenha os resultados se estiverem na memória
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado
             
@@ -416,7 +425,7 @@ if df_hist is not None:
                 st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
                 st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"].replace('%',''))
                 st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"].replace('%',''))
-                st.rerun() # Dá um "F5" no app e atualiza todos os sliders na hora!
+                st.rerun() # Aplica tudo instantaneamente na interface!
             
             st.markdown("---")
             st.markdown("### 🗺️ Matrizes Térmicas e Pontos Ótimos")
@@ -434,18 +443,23 @@ if df_hist is not None:
                 fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
                 fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
                 st.plotly_chart(fig_h1, use_container_width=True)
+                st.success(f"**📍 Ponto de Ouro:**\nAgressividade **{c_bst}** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
                 
             with c_h2:
                 pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
+                r_bst, c_bst, v_bst = get_best_point(pivot_2)
                 fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
                 fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
                 st.plotly_chart(fig_h2, use_container_width=True)
+                st.info(f"**📍 Ponto de Ouro:**\nJanela **{c_bst} Dias** com Modulador **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
             with c_h3:
                 pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
+                r_bst, c_bst, v_bst = get_best_point(pivot_3)
                 fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
                 fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
                 st.plotly_chart(fig_h3, use_container_width=True)
+                st.warning(f"**📍 Ponto de Ouro:**\nCompra **{c_bst}** e Venda **{r_bst}**\n*(Sortino: {v_bst:.2f})*")
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
