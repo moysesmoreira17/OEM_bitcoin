@@ -41,7 +41,7 @@ def carregar_dados_mercado(meses):
     try:
         hoje = datetime.now()
         inicio = hoje - relativedelta(months=meses)
-        inicio_query = inicio - relativedelta(days=400) # Busca ampliada para a média de 365d do Z-Score
+        inicio_query = inicio - relativedelta(days=400) 
         inicio_str = inicio_query.strftime('%Y-%m-%d')
         
         url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFII10&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
@@ -107,14 +107,11 @@ def carregar_dados_mercado(meses):
                    df_btc.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer').ffill().dropna()
         
-        # O cálculo do Z-Score exige histórico. Fazemos o cálculo antes do corte de visualização.
-        # Usa-se a cotação em USD para medir a saúde da rede de forma neutra cambial
         df_final['Mercado_USD'] = df_final['Preco']
         df_final['Baseline_365d'] = df_final['Mercado_USD'].rolling(window=365, min_periods=30).mean()
         df_final['Std_365d'] = df_final['Mercado_USD'].rolling(window=365, min_periods=30).std()
         df_final['Z_Score'] = ((df_final['Mercado_USD'] - df_final['Baseline_365d']) / df_final['Std_365d']).fillna(0)
 
-        # Corta apenas para a janela selecionada
         df_final = df_final[df_final.index >= pd.to_datetime((hoje - relativedelta(months=meses)).strftime('%Y-%m-%d'))]
         return df_final
     except Exception as e:
@@ -157,8 +154,8 @@ max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, int(st.sessio
 st.sidebar.subheader("⏱️ Radares de Saturação")
 janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_state.opt_janela))
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
-# NOVO DISJUNTOR Z-SCORE
-z_score_limite = st.sidebar.slider("Teto MVRV Z-Score (Disjuntor)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
+# Alteração Nomenclatura Z-Score
+z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -221,13 +218,12 @@ if df_hist is not None:
         
         acao_cor = "white"
         
-        # --- A NOVA FÍSICA DO DISJUNTOR Z-SCORE ---
         if z_score_live >= z_score_limite:
             status = "🚨 SATURAÇÃO MVRV (FUGA FORÇADA)"
-            porcentagem = max_sell_pct  # Força a venda máxima permitida
+            porcentagem = max_sell_pct 
             qtd_venda = saldo_btc * porcentagem
             recomendacao = f"Bolha Sistêmica: Venda {qtd_venda:.4f} BTC Imediatamente (~R$ {qtd_venda * u['Mercado']:,.2f})"
-            acao_cor = "#FF00FF" # Magenta piscante
+            acao_cor = "#FF00FF"
         elif delta > 0.02:
             modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade), 2.0))
             forca_compra = (delta * (risco / 2)) * modulador_compra
@@ -251,29 +247,35 @@ if df_hist is not None:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Preço Justo (OEM BRL)", f"R$ {oem_corrigido_brl:,.0f}")
         c2.metric("Preço Mercado (BRL)", f"R$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
-        # Agora o Z-Score ganhou destaque no visor
-        c3.metric("Risco Z-Score", f"{z_score_live:.2f}", f"Disjuntor em {z_score_limite:.1f}", delta_color="inverse")
+        c3.metric("Risco Z-Score", f"{z_score_live:.2f}", f"Limite em {z_score_limite:.1f}", delta_color="inverse")
         
         with c4:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
-        # Gráfico Principal
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Bruto)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.3), secondary_y=True)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['MA_1_DXY'], name=f'Tendência Liquidez ({janela_cin}d)', line=dict(color='#00FFFF', width=2)), secondary_y=True)
-        fig.update_layout(template="plotly_dark", height=500, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.08,
+            row_heights=[0.7, 0.3], 
+            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+        )
+
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Bruto)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.3), row=1, col=1, secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['MA_1_DXY'], name=f'Liquidez ({janela_cin}d)', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
+
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
+        fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1)
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1)
+
+        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
+        fig.update_yaxes(title_text="Preço (BRL)", row=1, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="Liquidez", row=1, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Z-Score", row=2, col=1)
         
-        # Gráfico de Calor (Z-Score)
-        st.markdown("### 🌡️ Termômetro de Saturação (MVRV Z-Score Proxy)")
-        fig_z = go.Figure()
-        fig_z.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')))
-        fig_z.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text=f"Disjuntor de Fuga ({z_score_limite})")
-        fig_z.update_layout(template="plotly_dark", height=250, margin=dict(l=0, r=0, t=20, b=0))
-        st.plotly_chart(fig_z, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
     # ABA 2: BACKTEST 
@@ -282,7 +284,8 @@ if df_hist is not None:
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        # Nomenclatura alterada a pedido
+        with c_fin1: start_brl = st.number_input("Valor Investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
@@ -309,13 +312,12 @@ if df_hist is not None:
                 qtd_btc_bnh += (aporte_mensal * (1 - taxa_corretora)) / p_mercado; total_investido_bnh += aporte_mensal
                 mes_anterior = data_atual.month
             
-            # --- OVERRIDE DE SATURAÇÃO Z-SCORE ---
+            # Limite Crítico Z-Score
             if z_curr >= z_score_limite and btc_oem > 0:
-                q_vender = btc_oem * max_sell_pct  # Despeja pesado sem perguntar
+                q_vender = btc_oem * max_sell_pct 
                 caixa_oem += (q_vender * p_mercado) * (1 - taxa_corretora)
                 btc_oem -= q_vender
             else:
-                # Lógica Normal se a rede não estiver saturada
                 if caixa_oem > 30: 
                     if delta > 0.02: 
                         mod_c = max(0.2, min(1 - (derivada_btc * sensibilidade), 2.0))
@@ -353,13 +355,10 @@ if df_hist is not None:
         sharpe_bnh, sortino_bnh = calc_sharpe_sortino(retornos_bnh)
         sharpe_oem, sortino_oem = calc_sharpe_sortino(retornos_oem)
 
-        if total_investido_oem > 0:
-            lucro_bnh = ((df_plot['Pat_BnH'].iloc[-1] - total_investido_bnh) / total_investido_bnh) * 100
-            lucro_oem = ((df_plot['Pat_OEM'].iloc[-1] - total_investido_oem) / total_investido_oem) * 100
-            dd_bnh = ((df_plot['Pat_BnH'] / df_plot['Pat_BnH'].cummax()) - 1).fillna(0).min() * 100
-            dd_oem = ((df_plot['Pat_OEM'] / df_plot['Pat_OEM'].cummax()) - 1).fillna(0).min() * 100
-        else:
-            lucro_bnh, lucro_oem, dd_bnh, dd_oem = 0.0, 0.0, 0.0, 0.0
+        lucro_bnh = ((df_plot['Pat_BnH'].iloc[-1] - total_investido_bnh) / total_investido_bnh) * 100 if total_investido_bnh > 0 else 0
+        lucro_oem = ((df_plot['Pat_OEM'].iloc[-1] - total_investido_oem) / total_investido_oem) * 100 if total_investido_oem > 0 else 0
+        dd_bnh = ((df_plot['Pat_BnH'] / df_plot['Pat_BnH'].cummax()) - 1).fillna(0).min() * 100
+        dd_oem = ((df_plot['Pat_OEM'] / df_plot['Pat_OEM'].cummax()) - 1).fillna(0).min() * 100
 
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
@@ -380,10 +379,16 @@ if df_hist is not None:
             st.metric("Total Injetado", f"R$ {total_investido_oem:,.2f}")
 
         st.markdown("---")
-        fig_bt = go.Figure()
-        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_BnH'], name='Benchmark (DCA)', line=dict(color='#888888', dash='dash')))
-        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_OEM'], name='Estratégia OEM', line=dict(color='#00FF00', width=3)))
-        fig_bt.update_layout(template="plotly_dark", title="Crescimento de Patrimônio Líquido (R$)", hovermode="x unified", height=400)
+        
+        fig_bt = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
+        
+        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_BnH'], name='Benchmark (DCA)', line=dict(color='#888888', dash='dash')), row=1, col=1)
+        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_OEM'], name='Estratégia OEM', line=dict(color='#00FF00', width=3)), row=1, col=1)
+        
+        fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
+        fig_bt.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Gatilho de Saturação", row=2, col=1)
+        
+        fig_bt.update_layout(template="plotly_dark", title="Crescimento de Patrimônio Líquido vs Saturação de Rede", hovermode="x unified", height=650)
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
@@ -391,16 +396,17 @@ if df_hist is not None:
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
         st.title("🔥 Otimizador de Matriz 5D")
-        st.markdown("O Otimizador varre as 5 variáveis vitais. O seu limite de Z-Score da barra lateral atua como um 'Disjuntor Global' durante este teste para medir a eficácia da proteção contra bolhas.")
+        st.markdown("O Otimizador varre as 5 variáveis vitais. O seu limite de Z-Score da barra lateral atua como um 'Gatilho de Segurança Global' durante este teste para medir a eficácia da proteção contra bolhas.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        with c_fin1: start_brl = st.number_input("Valor investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        # Nomenclatura alterada a pedido
+        with c_fin1: start_brl = st.number_input("Valor Investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
         if st.button("🚀 Processar Matriz Quantitativa", use_container_width=True):
-            with st.spinner("Computando backtests vetoriais com freio Z-Score. Aguarde..."):
+            with st.spinner("Computando backtests vetoriais com Gatilho Z-Score. Aguarde..."):
                 janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
                 sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
@@ -428,7 +434,7 @@ if df_hist is not None:
                         if mth != mes_ant: cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
                         dlt = (o_curr - m_curr) / o_curr
                         
-                        # Z-SCORE OVERRIDE NO MOTOR OTIMIZADOR
+                        # OVERRIDE DO Z-SCORE
                         if z_curr >= z_score_limite and bt > 0:
                             qv = bt * max_s
                             cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
