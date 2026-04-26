@@ -17,7 +17,7 @@ import itertools
 st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
 
 if 'opt_risco' not in st.session_state: st.session_state.opt_risco = 3.0
-if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 7
+if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 14 # Default mais seguro
 if 'opt_sens' not in st.session_state: st.session_state.opt_sens = 5.0
 if 'opt_buy' not in st.session_state: st.session_state.opt_buy = 90
 if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
@@ -136,7 +136,8 @@ def buscar_brl_live():
 # 2. INTERFACE E SIDEBAR 
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
-aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador de Grade (5D)"])
+# O Otimizador virou "Global"
+aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador Global (Consenso)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 
 risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, float(st.session_state.opt_risco), step=0.5)
@@ -154,7 +155,6 @@ max_sell_pct = st.sidebar.slider("Teto de Venda (% Máx)", 1, 100, int(st.sessio
 st.sidebar.subheader("⏱️ Radares de Saturação")
 janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_state.opt_janela))
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
-# Alteração Nomenclatura Z-Score
 z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
 df_hist = carregar_dados_mercado(meses)
@@ -228,7 +228,7 @@ if df_hist is not None:
             modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade), 2.0))
             forca_compra = (delta * (risco / 2)) * modulador_compra
             porcentagem = min(max_buy_pct, forca_compra) 
-            status = "🟢 COMPRA ELÁSTICA"
+            status = "🟢 COMPRA"
             recomendacao = f"Compre R$ {caixa * porcentagem:,.2f} ({porcentagem*100:.1f}% do Caixa)"
             acao_cor = "#00FF00"
         elif delta < -0.10:
@@ -284,7 +284,6 @@ if df_hist is not None:
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        # Nomenclatura alterada a pedido
         with c_fin1: start_brl = st.number_input("Valor Investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
@@ -312,7 +311,6 @@ if df_hist is not None:
                 qtd_btc_bnh += (aporte_mensal * (1 - taxa_corretora)) / p_mercado; total_investido_bnh += aporte_mensal
                 mes_anterior = data_atual.month
             
-            # Limite Crítico Z-Score
             if z_curr >= z_score_limite and btc_oem > 0:
                 q_vender = btc_oem * max_sell_pct 
                 caixa_oem += (q_vender * p_mercado) * (1 - taxa_corretora)
@@ -392,28 +390,28 @@ if df_hist is not None:
         st.plotly_chart(fig_bt, use_container_width=True)
 
     # ==========================================
-    # ABA 3: OTIMIZADOR DE GRADE
+    # ABA 3: OTIMIZADOR GLOBAL (CONSENSO)
     # ==========================================
-    elif aba_selecionada == "🔥 Otimizador de Grade (5D)":
-        st.title("🔥 Otimizador de Matriz 5D")
-        st.markdown("O Otimizador varre as 5 variáveis vitais. O seu limite de Z-Score da barra lateral atua como um 'Gatilho de Segurança Global' durante este teste para medir a eficácia da proteção contra bolhas.")
+    elif aba_selecionada == "🔥 Otimizador Global (Consenso)":
+        st.title("🔥 Matriz Global de Consenso")
+        st.markdown("O sistema buscará a combinação que performa melhor **através de todas as janelas de tempo simultaneamente**, garantindo estabilidade e eliminando a dependência do ruído.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
-        # Nomenclatura alterada a pedido
-        with c_fin1: start_brl = st.number_input("Valor Investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
+        with c_fin1: start_brl = st.number_input("Valor Investido Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
         with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
-        if st.button("🚀 Processar Matriz Quantitativa", use_container_width=True):
-            with st.spinner("Computando backtests vetoriais com Gatilho Z-Score. Aguarde..."):
+        if st.button("🚀 Processar Matriz Global", use_container_width=True):
+            with st.spinner("Computando Consenso Global através de todas as janelas temporais. Aguarde..."):
                 janelas_teste = [7, 14, 21, 30]
                 riscos_teste = [1.0, 2.0, 3.0, 4.0, 5.0]           
                 sensibilidades_teste = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   
                 compras_teste = [0.3, 0.6, 0.9]
                 vendas_teste = [0.1, 0.3, 0.6] 
                 
-                combinacoes = list(itertools.product(janelas_teste, riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
+                # A nova lógica não agrupa os resultados por janela, ela acha a média para as configurações!
+                combinacoes = list(itertools.product(riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
                 
                 mercado_arr = df_plot['Mercado'].values
                 oem_arr = df_plot['OEM'].values
@@ -421,61 +419,74 @@ if df_hist is not None:
                 z_arr = df_plot['Z_Score'].values
                 n_dias = len(mercado_arr)
                 
-                resultados = []
+                resultados_consenso = []
 
-                for jan_t, ris_t, sens_t, max_b, max_s in combinacoes:
-                    der_arr = pd.Series(mercado_arr).pct_change(periods=jan_t).fillna(0).values
-                    cx, bt, mes_ant = start_brl, start_btc, meses_arr[0]
-                    tot_inv = start_brl + (start_btc * mercado_arr[0])
-                    pat = np.zeros(n_dias)
+                for ris_t, sens_t, max_b, max_s in combinacoes:
+                    sortinos_da_config = []
                     
-                    for i in range(n_dias):
-                        m_curr, o_curr, mth, der, z_curr = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i], z_arr[i]
-                        if mth != mes_ant: cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
-                        dlt = (o_curr - m_curr) / o_curr
+                    # Roda o backtest para CADA janela usando a mesma configuração
+                    for jan_t in janelas_teste:
+                        der_arr = pd.Series(mercado_arr).pct_change(periods=jan_t).fillna(0).values
+                        cx, bt, mes_ant = start_brl, start_btc, meses_arr[0]
+                        tot_inv = start_brl + (start_btc * mercado_arr[0])
+                        pat = np.zeros(n_dias)
                         
-                        # OVERRIDE DO Z-SCORE
-                        if z_curr >= z_score_limite and bt > 0:
-                            qv = bt * max_s
-                            cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
-                        else:
-                            if cx > 30:
-                                if dlt > 0.02:
-                                    mc = max(0.2, min(1 - (der * sens_t), 2.0))
-                                    vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
-                                    if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
-                                elif dlt > -0.10:
-                                    vc = cx * 0.01; bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                        for i in range(n_dias):
+                            m_curr, o_curr, mth, der, z_curr = mercado_arr[i], oem_arr[i], meses_arr[i], der_arr[i], z_arr[i]
+                            if mth != mes_ant: cx += aporte_mensal; tot_inv += aporte_mensal; mes_ant = mth
+                            dlt = (o_curr - m_curr) / o_curr
+                            
+                            if z_curr >= z_score_limite and bt > 0:
+                                qv = bt * max_s
+                                cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
+                            else:
+                                if cx > 30:
+                                    if dlt > 0.02:
+                                        mc = max(0.2, min(1 - (der * sens_t), 2.0))
+                                        vc = cx * min(max_b, (dlt * (ris_t/2)) * mc)
+                                        if vc > 0: bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                                    elif dlt > -0.10:
+                                        vc = cx * 0.01; bt += (vc * (1 - taxa_corretora)) / m_curr; cx -= vc
+                                        
+                                if bt > 0 and dlt <= -0.10:
+                                    mv = max(0.2, min(1 + (der * sens_t), 2.0))
+                                    qv = bt * min(max_s, (abs(dlt) * (ris_t/2)) * mv)
+                                    if qv > 0: cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
                                     
-                            if bt > 0 and dlt <= -0.10:
-                                mv = max(0.2, min(1 + (der * sens_t), 2.0))
-                                qv = bt * min(max_s, (abs(dlt) * (ris_t/2)) * mv)
-                                if qv > 0: cx += (qv * m_curr) * (1 - taxa_corretora); bt -= qv
-                                
-                        pat[i] = cx + (bt * m_curr)
-                        
-                    rets = pd.Series(pat).pct_change().dropna()
-                    ret_neg = rets[rets < 0]
-                    sortino_val = (rets.mean() / ret_neg.std()) * np.sqrt(365) if len(ret_neg)>0 and ret_neg.std()>0 else 0
-                    roi_val = ((pat[-1] - tot_inv) / tot_inv) * 100 if tot_inv > 0 else 0
+                            pat[i] = cx + (bt * m_curr)
+                            
+                        rets = pd.Series(pat).pct_change().dropna()
+                        ret_neg = rets[rets < 0]
+                        sortino_val = (rets.mean() / ret_neg.std()) * np.sqrt(365) if len(ret_neg)>0 and ret_neg.std()>0 else 0
+                        sortinos_da_config.append(sortino_val)
                     
-                    resultados.append({
-                        "Janela (Dias)": jan_t, "Agressividade Base": ris_t, "Força do Modulador": sens_t,
-                        "Teto Compra (%)": f"{max_b*100:.0f}%", "Teto Venda (%)": f"{max_s*100:.0f}%",
-                        "Índice Sortino": round(sortino_val, 2), "Retorno (%)": round(roi_val, 1)
+                    # Salva a MÉDIA dos Sortinos dessa configuração nas 4 janelas
+                    media_sortino_global = np.mean(sortinos_da_config)
+                    
+                    # Vamos encontrar a melhor janela para expor visualmente, mas o filtro é pela média
+                    melhor_janela_indice = np.argmax(sortinos_da_config)
+                    melhor_janela_vencedora = janelas_teste[melhor_janela_indice]
+                    
+                    resultados_consenso.append({
+                        "Janela Resiliente (Dias)": melhor_janela_vencedora,
+                        "Agressividade Base": ris_t, 
+                        "Força do Modulador": sens_t,
+                        "Teto Compra (%)": f"{max_b*100:.0f}%", 
+                        "Teto Venda (%)": f"{max_s*100:.0f}%",
+                        "Score Consenso (Média Sortino)": round(media_sortino_global, 2)
                     })
                     
-                df_res = pd.DataFrame(resultados).sort_values(by="Índice Sortino", ascending=False).reset_index(drop=True)
+                df_res = pd.DataFrame(resultados_consenso).sort_values(by="Score Consenso (Média Sortino)", ascending=False).reset_index(drop=True)
                 st.session_state.df_res_otimizado = df_res 
 
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado
-            st.markdown("### 🏆 Top 5 Melhores Configurações Absolutas")
+            st.markdown("### 🏆 Top 5 Configurações Globais (Pau para Toda Obra)")
             st.dataframe(df_res.head(5), use_container_width=True)
             
             st.markdown("---")
-            if st.button("🎯 Exportar Configuração #1 para o Menu Lateral", type="primary", use_container_width=True):
-                st.session_state.opt_janela = int(df_res.iloc[0]["Janela (Dias)"])
+            if st.button("🎯 Aplicar Configuração Robusta ao Painel Live", type="primary", use_container_width=True):
+                st.session_state.opt_janela = int(df_res.iloc[0]["Janela Resiliente (Dias)"])
                 st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
                 st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
                 st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"].replace('%',''))
@@ -490,22 +501,23 @@ if df_hist is not None:
                 return r_max, c_max, v_max
 
             with c_h1:
-                pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Índice Sortino', aggfunc='max')
+                pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
                 r_bst, c_bst, v_bst = get_best_point(pivot_1)
                 fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
-                fig_h1.update_layout(template="plotly_dark", title="Motor vs Freio ABS", height=500)
+                fig_h1.update_layout(template="plotly_dark", title="Estabilidade: Motor vs Freio", height=500)
                 st.plotly_chart(fig_h1, use_container_width=True)
-                
+
             with c_h2:
-                pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Janela (Dias)', values='Índice Sortino', aggfunc='max')
-                fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{c} Dias" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
-                fig_h2.update_layout(template="plotly_dark", title="Calibragem de Tempo", height=500)
+                 # Substituição gráfica, não testamos mais as janelas de forma isolada, mas sim o Modulador vs Compra Máxima
+                pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
+                fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=pivot_2.columns, y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
+                fig_h2.update_layout(template="plotly_dark", title="Estabilidade: Absorção de Quedas", height=500)
                 st.plotly_chart(fig_h2, use_container_width=True)
 
             with c_h3:
-                pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Índice Sortino', aggfunc='max')
+                pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
                 fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
-                fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
+                fig_h3.update_layout(template="plotly_dark", title="Estabilidade: Calibragem de Bolso", height=500)
                 st.plotly_chart(fig_h3, use_container_width=True)
 
 else:
