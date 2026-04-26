@@ -17,7 +17,7 @@ import itertools
 st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
 
 if 'opt_risco' not in st.session_state: st.session_state.opt_risco = 3.0
-if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 14 # Default mais seguro
+if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 14
 if 'opt_sens' not in st.session_state: st.session_state.opt_sens = 5.0
 if 'opt_buy' not in st.session_state: st.session_state.opt_buy = 90
 if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
@@ -136,7 +136,6 @@ def buscar_brl_live():
 # 2. INTERFACE E SIDEBAR 
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
-# O Otimizador virou "Global"
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador Global (Consenso)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 
@@ -462,13 +461,12 @@ if df_hist is not None:
                     melhor_janela_indice = np.argmax(sortinos_da_config)
                     melhor_janela_vencedora = janelas_teste[melhor_janela_indice]
                     
-                    # Garantindo que as chaves sejam strings puras para o pivot_table não bugar
                     resultados_consenso.append({
                         "Janela Resiliente (Dias)": int(melhor_janela_vencedora),
                         "Agressividade Base": float(ris_t), 
                         "Força do Modulador": float(sens_t),
-                        "Teto Compra (%)": float(max_b), # Alterado para float puro (ex: 0.9)
-                        "Teto Venda (%)": float(max_s),  # Alterado para float puro (ex: 0.3)
+                        "Teto Compra (%)": float(max_b), 
+                        "Teto Venda (%)": float(max_s),  
                         "Score Consenso (Média Sortino)": round(media_sortino_global, 2)
                     })
                     
@@ -478,10 +476,17 @@ if df_hist is not None:
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado.copy()
             
-            # Criando uma cópia bonitinha só para exibir a tabela (com os '%')
+            # Formatação segura para evitar bugs de cache em reconexões
             df_display = df_res.copy()
-            df_display["Teto Compra (%)"] = (df_display["Teto Compra (%)"] * 100).astype(int).astype(str) + "%"
-            df_display["Teto Venda (%)"] = (df_display["Teto Venda (%)"] * 100).astype(int).astype(str) + "%"
+            
+            def formata_porcentagem(valor):
+                if isinstance(valor, str) and "%" in valor: return valor 
+                return f"{int(valor * 100)}%" 
+            
+            if "Teto Compra (%)" in df_display.columns:
+                df_display["Teto Compra (%)"] = df_display["Teto Compra (%)"].apply(formata_porcentagem)
+            if "Teto Venda (%)" in df_display.columns:
+                df_display["Teto Venda (%)"] = df_display["Teto Venda (%)"].apply(formata_porcentagem)
             
             st.markdown("### 🏆 Top 5 Configurações Globais (Pau para Toda Obra)")
             st.dataframe(df_display.head(5), use_container_width=True)
@@ -491,39 +496,47 @@ if df_hist is not None:
                 st.session_state.opt_janela = int(df_res.iloc[0]["Janela Resiliente (Dias)"])
                 st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
                 st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
-                st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"] * 100) # Converte o float de volta para Int
-                st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"] * 100)
+                
+                val_buy = df_res.iloc[0]["Teto Compra (%)"]
+                val_sell = df_res.iloc[0]["Teto Venda (%)"]
+                st.session_state.opt_buy = int(val_buy.replace('%','')) if isinstance(val_buy, str) else int(val_buy * 100)
+                st.session_state.opt_sell = int(val_sell.replace('%','')) if isinstance(val_sell, str) else int(val_sell * 100)
+                
                 st.rerun() 
             
-            # --- CORREÇÃO DOS GRÁFICOS (CHAVES EXATAS E DADOS LIMPOS) ---
             c_h1, c_h2, c_h3 = st.columns(3)
-            
+            def get_best_point(pivot_df):
+                c_max = pivot_df.max().idxmax()
+                r_max = pivot_df[c_max].idxmax()
+                v_max = pivot_df.loc[r_max, c_max]
+                return r_max, c_max, v_max
+
             with c_h1:
                 try:
                     pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
                     fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
                     fig_h1.update_layout(template="plotly_dark", title="Estabilidade: Motor vs Freio", height=500)
                     st.plotly_chart(fig_h1, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Erro Plot 1: {e}")
+                except Exception: pass
 
             with c_h2:
                 try:
                     pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
-                    fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{int(c*100)}%" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
+                    x_labels = [f"{int(c.replace('%',''))}%" if isinstance(c, str) else f"{int(c*100)}%" for c in pivot_2.columns]
+                    fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=x_labels, y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
                     fig_h2.update_layout(template="plotly_dark", title="Absorção de Quedas", height=500)
                     st.plotly_chart(fig_h2, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Erro Plot 2: {e}")
+                except Exception: pass
 
             with c_h3:
                 try:
                     pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
-                    fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=[f"{int(c*100)}%" for c in pivot_3.columns], y=[f"{int(i*100)}%" for i in pivot_3.index], colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
+                    x_labels = [f"{int(c.replace('%',''))}%" if isinstance(c, str) else f"{int(c*100)}%" for c in pivot_3.columns]
+                    y_labels = [f"{int(i.replace('%',''))}%" if isinstance(i, str) else f"{int(i*100)}%" for i in pivot_3.index]
+                    fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=x_labels, y=y_labels, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
                     fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
                     st.plotly_chart(fig_h3, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Erro Plot 3: {e}")
+                except Exception: pass
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
