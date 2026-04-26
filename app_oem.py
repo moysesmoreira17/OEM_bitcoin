@@ -410,7 +410,6 @@ if df_hist is not None:
                 compras_teste = [0.3, 0.6, 0.9]
                 vendas_teste = [0.1, 0.3, 0.6] 
                 
-                # A nova lógica não agrupa os resultados por janela, ela acha a média para as configurações!
                 combinacoes = list(itertools.product(riscos_teste, sensibilidades_teste, compras_teste, vendas_teste))
                 
                 mercado_arr = df_plot['Mercado'].values
@@ -424,7 +423,6 @@ if df_hist is not None:
                 for ris_t, sens_t, max_b, max_s in combinacoes:
                     sortinos_da_config = []
                     
-                    # Roda o backtest para CADA janela usando a mesma configuração
                     for jan_t in janelas_teste:
                         der_arr = pd.Series(mercado_arr).pct_change(periods=jan_t).fillna(0).values
                         cx, bt, mes_ant = start_brl, start_btc, meses_arr[0]
@@ -460,19 +458,17 @@ if df_hist is not None:
                         sortino_val = (rets.mean() / ret_neg.std()) * np.sqrt(365) if len(ret_neg)>0 and ret_neg.std()>0 else 0
                         sortinos_da_config.append(sortino_val)
                     
-                    # Salva a MÉDIA dos Sortinos dessa configuração nas 4 janelas
                     media_sortino_global = np.mean(sortinos_da_config)
-                    
-                    # Vamos encontrar a melhor janela para expor visualmente, mas o filtro é pela média
                     melhor_janela_indice = np.argmax(sortinos_da_config)
                     melhor_janela_vencedora = janelas_teste[melhor_janela_indice]
                     
+                    # Garantindo que as chaves sejam strings puras para o pivot_table não bugar
                     resultados_consenso.append({
-                        "Janela Resiliente (Dias)": melhor_janela_vencedora,
-                        "Agressividade Base": ris_t, 
-                        "Força do Modulador": sens_t,
-                        "Teto Compra (%)": f"{max_b*100:.0f}%", 
-                        "Teto Venda (%)": f"{max_s*100:.0f}%",
+                        "Janela Resiliente (Dias)": int(melhor_janela_vencedora),
+                        "Agressividade Base": float(ris_t), 
+                        "Força do Modulador": float(sens_t),
+                        "Teto Compra (%)": float(max_b), # Alterado para float puro (ex: 0.9)
+                        "Teto Venda (%)": float(max_s),  # Alterado para float puro (ex: 0.3)
                         "Score Consenso (Média Sortino)": round(media_sortino_global, 2)
                     })
                     
@@ -480,45 +476,54 @@ if df_hist is not None:
                 st.session_state.df_res_otimizado = df_res 
 
         if 'df_res_otimizado' in st.session_state:
-            df_res = st.session_state.df_res_otimizado
+            df_res = st.session_state.df_res_otimizado.copy()
+            
+            # Criando uma cópia bonitinha só para exibir a tabela (com os '%')
+            df_display = df_res.copy()
+            df_display["Teto Compra (%)"] = (df_display["Teto Compra (%)"] * 100).astype(int).astype(str) + "%"
+            df_display["Teto Venda (%)"] = (df_display["Teto Venda (%)"] * 100).astype(int).astype(str) + "%"
+            
             st.markdown("### 🏆 Top 5 Configurações Globais (Pau para Toda Obra)")
-            st.dataframe(df_res.head(5), use_container_width=True)
+            st.dataframe(df_display.head(5), use_container_width=True)
             
             st.markdown("---")
             if st.button("🎯 Aplicar Configuração Robusta ao Painel Live", type="primary", use_container_width=True):
                 st.session_state.opt_janela = int(df_res.iloc[0]["Janela Resiliente (Dias)"])
                 st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
                 st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
-                st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"].replace('%',''))
-                st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"].replace('%',''))
+                st.session_state.opt_buy = int(df_res.iloc[0]["Teto Compra (%)"] * 100) # Converte o float de volta para Int
+                st.session_state.opt_sell = int(df_res.iloc[0]["Teto Venda (%)"] * 100)
                 st.rerun() 
             
+            # --- CORREÇÃO DOS GRÁFICOS (CHAVES EXATAS E DADOS LIMPOS) ---
             c_h1, c_h2, c_h3 = st.columns(3)
-            def get_best_point(pivot_df):
-                c_max = pivot_df.max().idxmax()
-                r_max = pivot_df[c_max].idxmax()
-                v_max = pivot_df.loc[r_max, c_max]
-                return r_max, c_max, v_max
-
+            
             with c_h1:
-                pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
-                r_bst, c_bst, v_bst = get_best_point(pivot_1)
-                fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
-                fig_h1.update_layout(template="plotly_dark", title="Estabilidade: Motor vs Freio", height=500)
-                st.plotly_chart(fig_h1, use_container_width=True)
+                try:
+                    pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
+                    fig_h1 = go.Figure(data=go.Heatmap(z=pivot_1.values, x=[f"Risco {c}" for c in pivot_1.columns], y=[f"Modulador {i}" for i in pivot_1.index], colorscale='Viridis', text=np.round(pivot_1.values, 2), texttemplate="%{text}"))
+                    fig_h1.update_layout(template="plotly_dark", title="Estabilidade: Motor vs Freio", height=500)
+                    st.plotly_chart(fig_h1, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro Plot 1: {e}")
 
             with c_h2:
-                 # Substituição gráfica, não testamos mais as janelas de forma isolada, mas sim o Modulador vs Compra Máxima
-                pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
-                fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=pivot_2.columns, y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
-                fig_h2.update_layout(template="plotly_dark", title="Estabilidade: Absorção de Quedas", height=500)
-                st.plotly_chart(fig_h2, use_container_width=True)
+                try:
+                    pivot_2 = df_res.pivot_table(index='Força do Modulador', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
+                    fig_h2 = go.Figure(data=go.Heatmap(z=pivot_2.values, x=[f"{int(c*100)}%" for c in pivot_2.columns], y=[f"Modulador {i}" for i in pivot_2.index], colorscale='Plasma', text=np.round(pivot_2.values, 2), texttemplate="%{text}"))
+                    fig_h2.update_layout(template="plotly_dark", title="Absorção de Quedas", height=500)
+                    st.plotly_chart(fig_h2, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro Plot 2: {e}")
 
             with c_h3:
-                pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
-                fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=pivot_3.columns, y=pivot_3.index, colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
-                fig_h3.update_layout(template="plotly_dark", title="Estabilidade: Calibragem de Bolso", height=500)
-                st.plotly_chart(fig_h3, use_container_width=True)
+                try:
+                    pivot_3 = df_res.pivot_table(index='Teto Venda (%)', columns='Teto Compra (%)', values='Score Consenso (Média Sortino)', aggfunc='max')
+                    fig_h3 = go.Figure(data=go.Heatmap(z=pivot_3.values, x=[f"{int(c*100)}%" for c in pivot_3.columns], y=[f"{int(i*100)}%" for i in pivot_3.index], colorscale='Magma', text=np.round(pivot_3.values, 2), texttemplate="%{text}"))
+                    fig_h3.update_layout(template="plotly_dark", title="Calibragem de Bolso", height=500)
+                    st.plotly_chart(fig_h3, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro Plot 3: {e}")
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
