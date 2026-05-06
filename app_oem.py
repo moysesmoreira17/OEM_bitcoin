@@ -12,17 +12,14 @@ import numpy as np
 import itertools 
 
 # ==========================================
-# 0. PORTA DO COFRE (LOGIN)
+# 0. PORTA DO COFRE (LOGIN INSTITUCIONAL)
 # ==========================================
 st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
 
-# Inicializa o status de autenticação se não existir
 if 'autenticado' not in st.session_state:
     st.session_state.autenticado = False
 
-# Se não estiver autenticado, mostra a tela de login e PARA o código
 if not st.session_state.autenticado:
-    # Um layout centralizado e limpo para o Login
     c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -32,24 +29,20 @@ if not st.session_state.autenticado:
         usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
         
-       if st.button("Autenticar", use_container_width=True):
-            # Alterado: Agora o robô lê a senha direto da raiz, exatamente 
-            # como você configurou na tela do Streamlit Cloud!
+        if st.button("Autenticar", use_container_width=True):
+            # Tenta ler as credenciais do cofre
             if usuario in st.secrets and st.secrets[usuario] == senha:
                 st.session_state.autenticado = True
-                st.rerun() # Recarrega a página agora com acesso liberado
+                st.rerun() 
             else:
                 st.error("Credenciais inválidas. Acesso negado.")
     
-    # O comando abaixo é o coração da segurança. Ele IMPEDE que o python continue 
-    # lendo o resto do arquivo app.py se a pessoa não passou pelo if acima.
+    # O st.stop() bloqueia o carregamento de todo o resto do robô se não houver login
     st.stop()
-    
-# ==========================================
-# 0. MEMÓRIA DE SESSÃO
-# ==========================================
-st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
 
+# ==========================================
+# 1. MEMÓRIA DE SESSÃO DA ESTRATÉGIA
+# ==========================================
 if 'opt_risco' not in st.session_state: st.session_state.opt_risco = 3.0
 if 'opt_janela' not in st.session_state: st.session_state.opt_janela = 14
 if 'opt_sens' not in st.session_state: st.session_state.opt_sens = 5.0
@@ -58,7 +51,7 @@ if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
 if 'opt_zscore' not in st.session_state: st.session_state.opt_zscore = 4.0
 
 # ==========================================
-# 1. CONFIGURAÇÃO E DADOS BASE
+# 2. CONFIGURAÇÃO E DADOS BASE
 # ==========================================
 FRED_API_KEY = st.secrets["FRED_API_KEY"]
 
@@ -167,7 +160,7 @@ def buscar_brl_live():
     except: return 5.0 
 
 # ==========================================
-# 2. INTERFACE E SIDEBAR 
+# 3. INTERFACE E SIDEBAR 
 # ==========================================
 st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador Global (Consenso)"])
@@ -189,6 +182,12 @@ st.sidebar.subheader("⏱️ Radares de Saturação")
 janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_state.opt_janela))
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
 z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
+
+# LOGOUT
+st.sidebar.markdown("---")
+if st.sidebar.button("Sair (Logout)", use_container_width=True):
+    st.session_state.autenticado = False
+    st.rerun()
 
 df_hist = carregar_dados_mercado(meses)
 
@@ -510,7 +509,6 @@ if df_hist is not None:
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado.copy()
             
-            # Formatação segura para evitar bugs de cache em reconexões
             df_display = df_res.copy()
             
             def formata_porcentagem(valor):
