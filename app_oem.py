@@ -12,6 +12,40 @@ import numpy as np
 import itertools 
 
 # ==========================================
+# 0. PORTA DO COFRE (LOGIN)
+# ==========================================
+st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
+
+# Inicializa o status de autenticação se não existir
+if 'autenticado' not in st.session_state:
+    st.session_state.autenticado = False
+
+# Se não estiver autenticado, mostra a tela de login e PARA o código
+if not st.session_state.autenticado:
+    # Um layout centralizado e limpo para o Login
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.title("🔐 Terminal OEM")
+        st.markdown("Acesso restrito. Insira suas credenciais institucionais.")
+        
+        usuario = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+        
+        if st.button("Autenticar", use_container_width=True):
+            senhas_validas = st.secrets.get("credentials", {})
+            # Verifica se o usuário existe no cofre E se a senha bate
+            if usuario in senhas_validas and senhas_validas[usuario] == senha:
+                st.session_state.autenticado = True
+                st.rerun() # Recarrega a página agora com acesso liberado
+            else:
+                st.error("Credenciais inválidas. Acesso negado.")
+    
+    # O comando abaixo é o coração da segurança. Ele IMPEDE que o python continue 
+    # lendo o resto do arquivo app.py se a pessoa não passou pelo if acima.
+    st.stop()
+    
+# ==========================================
 # 0. MEMÓRIA DE SESSÃO
 # ==========================================
 st.set_page_config(page_title="Terminal Quantitativo OEM (BRL)", layout="wide")
