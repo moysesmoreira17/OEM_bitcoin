@@ -32,10 +32,10 @@ if not st.session_state.autenticado:
         usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
         
-        if st.button("Autenticar", use_container_width=True):
-            senhas_validas = st.secrets.get("credentials", {})
-            # Verifica se o usuário existe no cofre E se a senha bate
-            if usuario in senhas_validas and senhas_validas[usuario] == senha:
+       if st.button("Autenticar", use_container_width=True):
+            # Alterado: Agora o robô lê a senha direto da raiz, exatamente 
+            # como você configurou na tela do Streamlit Cloud!
+            if usuario in st.secrets and st.secrets[usuario] == senha:
                 st.session_state.autenticado = True
                 st.rerun() # Recarrega a página agora com acesso liberado
             else:
