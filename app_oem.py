@@ -296,36 +296,42 @@ if df_hist is not None:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
+        # Alteração chave: Ativamos o Eixo Y Secundário em ambas as linhas (rows)
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.08,
             row_heights=[0.7, 0.3], 
-            specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
+            specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
         )
 
-        # BTC e OEM
+        # --- ANDAR SUPERIOR (Linha 1) ---
+        # BTC e OEM (Eixo Esquerdo Superior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
         
-        # Nasdaq 100 e 1/DXY no secundário
+        # Nasdaq 100 (Eixo Direito Superior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=1, col=1, secondary_y=True)
 
-        # Z-Score
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
-        fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1)
-        fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1)
+        # --- ANDAR INFERIOR (Linha 2) ---
+        # Z-Score (Eixo Esquerdo Inferior)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
+        fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1, secondary_y=False)
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
+
+        # 1/DXY (Eixo Direito Inferior)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
         fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Macro (NDX / 1-DXY)", row=1, col=1, secondary_y=True, showgrid=False)
-        fig.update_yaxes(title_text="Z-Score", row=2, col=1)
+        fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="1/DXY", row=2, col=1, secondary_y=True, showgrid=False)
         
         st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
-    # ABA 2: BACKTEST (Sem mudanças estruturais)
+    # ABA 2: BACKTEST
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
@@ -547,6 +553,12 @@ if df_hist is not None:
                 st.rerun() 
             
             c_h1, c_h2, c_h3 = st.columns(3)
+            def get_best_point(pivot_df):
+                c_max = pivot_df.max().idxmax()
+                r_max = pivot_df[c_max].idxmax()
+                v_max = pivot_df.loc[r_max, c_max]
+                return r_max, c_max, v_max
+
             with c_h1:
                 try:
                     pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
