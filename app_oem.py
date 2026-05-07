@@ -296,7 +296,21 @@ if df_hist is not None:
             st.markdown(f"<h4 style='text-align: center; color: {acao_cor}; margin-bottom: 0px;'>{status}</h4>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align: center; font-size: 14px;'><b>Ação:</b> {recomendacao}</p>", unsafe_allow_html=True)
 
-        # Alteração chave: Ativamos o Eixo Y Secundário em ambas as linhas (rows)
+        st.markdown("---")
+        
+        # --- NOVO BLOCO: MATRIZ DE CORRELAÇÃO DE PEARSON ---
+        st.markdown(f"#### 🔗 Correlações Estruturais (Baseado na janela de {meses} meses)")
+        
+        # Calculando as correlações com o preço de Mercado do BTC
+        corr_oem = df_plot['Mercado'].corr(df_plot['OEM'])
+        corr_ndx = df_plot['Mercado'].corr(df_plot['NDX'])
+        corr_dxy = df_plot['Mercado'].corr(df_plot['1_DXY'])
+        
+        corr_col1, corr_col2, corr_col3 = st.columns(3)
+        corr_col1.metric("BTC vs Valor Justo (OEM)", f"{corr_oem:.2f}")
+        corr_col2.metric("BTC vs Nasdaq 100", f"{corr_ndx:.2f}")
+        corr_col3.metric("BTC vs Liquidez (1/DXY)", f"{corr_dxy:.2f}")
+
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
@@ -305,24 +319,17 @@ if df_hist is not None:
             specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
         )
 
-        # --- ANDAR SUPERIOR (Linha 1) ---
-        # BTC e OEM (Eixo Esquerdo Superior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
-        
-        # Nasdaq 100 (Eixo Direito Superior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
 
-        # --- ANDAR INFERIOR (Linha 2) ---
-        # Z-Score (Eixo Esquerdo Inferior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
         fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1, secondary_y=False)
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
 
-        # 1/DXY (Eixo Direito Inferior)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
-        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
+        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
         fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
