@@ -112,7 +112,6 @@ def carregar_dados_mercado(meses):
             df_brl = pd.DataFrame(columns=['BRL'])
             df_brl.index.name = 'date'
             
-        # Coletando Nasdaq 100
         try:
             ndx_raw = yf.Ticker("^NDX").history(start=inicio_str)[['Close']]
             ndx_raw.index = ndx_raw.index.tz_localize(None).normalize()
@@ -229,6 +228,7 @@ if df_hist is not None:
         })
     
     df_plot = pd.DataFrame(dados_oem)
+    df_plot['1_DXY'] = 1 / df_plot['DXY']
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
 
     # ==========================================
@@ -247,6 +247,7 @@ if df_hist is not None:
         if dxy_agora: df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
         if brl_agora: df_plot.iloc[-1, df_plot.columns.get_loc('BRL')] = brl_agora
         if ndx_agora: df_plot.iloc[-1, df_plot.columns.get_loc('NDX')] = ndx_agora
+        df_plot.iloc[-1, df_plot.columns.get_loc('1_DXY')] = 1 / dxy_agora if dxy_agora else 0
 
         u = df_plot.iloc[-1]
         
@@ -303,24 +304,28 @@ if df_hist is not None:
             specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
         )
 
+        # BTC e OEM
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
-        # Nasdaq 100 no eixo secundário
+        
+        # Nasdaq 100 e 1/DXY no secundário
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=1, col=1, secondary_y=True)
 
+        # Z-Score
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
         fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1)
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1)
 
         fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Nasdaq 100 (Pts)", row=1, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Macro (NDX / 1-DXY)", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
-    # ABA 2: BACKTEST 
+    # ABA 2: BACKTEST (Sem mudanças estruturais)
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
         st.title("🧪 Mesa de Teste de Estresse (Backtest)")
@@ -421,10 +426,8 @@ if df_hist is not None:
         st.markdown("---")
         
         fig_bt = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
-        
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_BnH'], name='Benchmark (DCA)', line=dict(color='#888888', dash='dash')), row=1, col=1)
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Pat_OEM'], name='Estratégia OEM', line=dict(color='#00FF00', width=3)), row=1, col=1)
-        
         fig_bt.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
         fig_bt.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Gatilho de Saturação", row=2, col=1)
         
@@ -518,7 +521,6 @@ if df_hist is not None:
 
         if 'df_res_otimizado' in st.session_state:
             df_res = st.session_state.df_res_otimizado.copy()
-            
             df_display = df_res.copy()
             
             def formata_porcentagem(valor):
@@ -538,21 +540,13 @@ if df_hist is not None:
                 st.session_state.opt_janela = int(df_res.iloc[0]["Janela Resiliente (Dias)"])
                 st.session_state.opt_risco = float(df_res.iloc[0]["Agressividade Base"])
                 st.session_state.opt_sens = float(df_res.iloc[0]["Força do Modulador"])
-                
                 val_buy = df_res.iloc[0]["Teto Compra (%)"]
                 val_sell = df_res.iloc[0]["Teto Venda (%)"]
                 st.session_state.opt_buy = int(val_buy.replace('%','')) if isinstance(val_buy, str) else int(val_buy * 100)
                 st.session_state.opt_sell = int(val_sell.replace('%','')) if isinstance(val_sell, str) else int(val_sell * 100)
-                
                 st.rerun() 
             
             c_h1, c_h2, c_h3 = st.columns(3)
-            def get_best_point(pivot_df):
-                c_max = pivot_df.max().idxmax()
-                r_max = pivot_df[c_max].idxmax()
-                v_max = pivot_df.loc[r_max, c_max]
-                return r_max, c_max, v_max
-
             with c_h1:
                 try:
                     pivot_1 = df_res.pivot_table(index='Força do Modulador', columns='Agressividade Base', values='Score Consenso (Média Sortino)', aggfunc='max')
