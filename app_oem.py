@@ -30,14 +30,11 @@ if not st.session_state.autenticado:
         senha = st.text_input("Senha", type="password")
         
         if st.button("Autenticar", use_container_width=True):
-            # Tenta ler as credenciais do cofre
             if usuario in st.secrets and st.secrets[usuario] == senha:
                 st.session_state.autenticado = True
                 st.rerun() 
             else:
                 st.error("Credenciais inválidas. Acesso negado.")
-    
-    # O st.stop() bloqueia o carregamento de todo o resto do robô se não houver login
     st.stop()
 
 # ==========================================
@@ -114,6 +111,16 @@ def carregar_dados_mercado(meses):
         except:
             df_brl = pd.DataFrame(columns=['BRL'])
             df_brl.index.name = 'date'
+            
+        # Coletando Nasdaq 100
+        try:
+            ndx_raw = yf.Ticker("^NDX").history(start=inicio_str)[['Close']]
+            ndx_raw.index = ndx_raw.index.tz_localize(None).normalize()
+            df_ndx = pd.DataFrame({'NDX': ndx_raw['Close']})
+            df_ndx.index.name = 'date'
+        except:
+            df_ndx = pd.DataFrame(columns=['NDX'])
+            df_ndx.index.name = 'date'
 
         df_j = pd.DataFrame(resp_j)[['date', 'value']].rename(columns={'value':'Juro'}).dropna()
         df_j['date'], df_j['Juro'] = pd.to_datetime(df_j['date']), pd.to_numeric(df_j['Juro'], errors='coerce')
@@ -131,6 +138,7 @@ def carregar_dados_mercado(meses):
                    df_m.set_index('date'), how='outer').join(
                    df_dxy, how='outer').join(
                    df_brl, how='outer').join(
+                   df_ndx, how='outer').join(
                    df_btc.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer').ffill().dropna()
         
@@ -159,6 +167,10 @@ def buscar_brl_live():
     try: return float(yf.Ticker("BRL=X").history(period="1d")['Close'].iloc[-1])
     except: return 5.0 
 
+def buscar_ndx_live():
+    try: return float(yf.Ticker("^NDX").history(period="1d")['Close'].iloc[-1])
+    except: return 15000.0
+
 # ==========================================
 # 3. INTERFACE E SIDEBAR 
 # ==========================================
@@ -183,7 +195,6 @@ janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_s
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
 z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
-# LOGOUT
 st.sidebar.markdown("---")
 if st.sidebar.button("Sair (Logout)", use_container_width=True):
     st.session_state.autenticado = False
@@ -196,6 +207,7 @@ if df_hist is not None:
     for d, r in df_hist.iterrows():
         anos_g = (d - DATA_GENESIS).days / 365.25
         dxy_atual = r['DXY'] if not pd.isna(r['DXY']) else 100.0
+        ndx_atual = r['NDX'] if 'NDX' in r and not pd.isna(r['NDX']) else 15000.0
         fator_dxy = 100.0 / max(50.0, dxy_atual) 
         m2_g = (r['M2']/1000)*4.8
         penet = 0.05 / (1 + math.exp(-0.4 * (anos_g - 10)))
@@ -213,13 +225,11 @@ if df_hist is not None:
         
         dados_oem.append({
             "Data": d, "OEM": p_oem_brl, "OEM_USD": p_oem_usd, "Mercado": mercado_brl, 
-            "DXY": dxy_atual, "BRL": brl_rate, "Z_Score": r['Z_Score']
+            "DXY": dxy_atual, "BRL": brl_rate, "NDX": ndx_atual, "Z_Score": r['Z_Score']
         })
     
     df_plot = pd.DataFrame(dados_oem)
-    df_plot['1_DXY'] = 1 / df_plot['DXY']
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
-    df_plot['MA_1_DXY'] = df_plot['1_DXY'].rolling(window=janela_cin).mean()
 
     # ==========================================
     # ABA 1: MONITORAMENTO LIVE
@@ -229,14 +239,14 @@ if df_hist is not None:
         preco_usd_agora = buscar_preco_live()
         dxy_agora = buscar_dxy_live()
         brl_agora = buscar_brl_live()
+        ndx_agora = buscar_ndx_live()
         
-        inverso_dxy_agora = 1 / dxy_agora if dxy_agora else 0
         preco_brl_agora = preco_usd_agora * brl_agora if preco_usd_agora and brl_agora else None
         
         if preco_brl_agora: df_plot.iloc[-1, df_plot.columns.get_loc('Mercado')] = preco_brl_agora
         if dxy_agora: df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
         if brl_agora: df_plot.iloc[-1, df_plot.columns.get_loc('BRL')] = brl_agora
-        df_plot.iloc[-1, df_plot.columns.get_loc('1_DXY')] = inverso_dxy_agora
+        if ndx_agora: df_plot.iloc[-1, df_plot.columns.get_loc('NDX')] = ndx_agora
 
         u = df_plot.iloc[-1]
         
@@ -295,16 +305,16 @@ if df_hist is not None:
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Bruto)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.3), row=1, col=1, secondary_y=True)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['MA_1_DXY'], name=f'Liquidez ({janela_cin}d)', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
+        # Nasdaq 100 no eixo secundário
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1)
         fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1)
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1)
 
         fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=30, b=0), hovermode="x unified")
-        fig.update_yaxes(title_text="Preço (BRL)", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Liquidez", row=1, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="Nasdaq 100 (Pts)", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
