@@ -195,6 +195,10 @@ sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.ses
 z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📐 Geometria de Mercado")
+mostrar_fib_sqrt3 = st.sidebar.checkbox("Plotar Níveis Sqrt(3)", value=True)
+
+st.sidebar.markdown("---")
 if st.sidebar.button("Sair (Logout)", use_container_width=True):
     st.session_state.autenticado = False
     st.rerun()
@@ -298,10 +302,7 @@ if df_hist is not None:
 
         st.markdown("---")
         
-        # --- NOVO BLOCO: MATRIZ DE CORRELAÇÃO DE PEARSON ---
         st.markdown(f"#### 🔗 Correlações Estruturais (Baseado na janela de {meses} meses)")
-        
-        # Calculando as correlações com o preço de Mercado do BTC
         corr_oem = df_plot['Mercado'].corr(df_plot['OEM'])
         corr_ndx = df_plot['Mercado'].corr(df_plot['NDX'])
         corr_dxy = df_plot['Mercado'].corr(df_plot['1_DXY'])
@@ -328,6 +329,30 @@ if df_hist is not None:
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
+
+        # --- APLICAÇÃO DA GEOMETRIA SQRT(3) ---
+        if mostrar_fib_sqrt3:
+            p_max = df_plot['Mercado'].max()
+            p_min = df_plot['Mercado'].min()
+            diff = p_max - p_min
+            
+            # Cálculo dos Níveis baseados em potências de (1/√3)
+            # Fib 23.6% -> Sqrt(3) ~ 19.2%
+            nivel_1 = 1 / (math.sqrt(3)**3) 
+            # Fib 38.2% -> Sqrt(3) ~ 33.3%
+            nivel_2 = 1 / 3                 
+            # Fib 61.8% -> Sqrt(3) ~ 57.7%
+            nivel_3 = 1 / math.sqrt(3)      
+            
+            # Traçando Retrações (Eixo Esq)
+            fig.add_hline(y=p_max, line_dash="dot", line_color="rgba(150, 150, 150, 0.4)", annotation_text="Topo 0%", row=1, col=1, secondary_y=False)
+            fig.add_hline(y=p_max - diff * nivel_1, line_dash="dot", line_color="rgba(255, 255, 0, 0.6)", annotation_text="Retração 19.2%", row=1, col=1, secondary_y=False)
+            fig.add_hline(y=p_max - diff * nivel_2, line_dash="dot", line_color="rgba(255, 165, 0, 0.6)", annotation_text="Retração 33.3%", row=1, col=1, secondary_y=False)
+            fig.add_hline(y=p_max - diff * nivel_3, line_dash="dot", line_color="rgba(255, 0, 0, 0.6)", annotation_text="Retração 57.7%", row=1, col=1, secondary_y=False)
+            fig.add_hline(y=p_min, line_dash="dot", line_color="rgba(150, 150, 150, 0.4)", annotation_text="Fundo 100%", row=1, col=1, secondary_y=False)
+            
+            # Traçando a Expansão de Crescimento √3 (Target de Ciclo)
+            fig.add_hline(y=p_min + diff * math.sqrt(3), line_dash="dash", line_color="rgba(0, 255, 0, 0.7)", annotation_text="Expansão 173.2% (√3)", row=1, col=1, secondary_y=False)
 
         fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
