@@ -330,35 +330,57 @@ if df_hist is not None:
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
-        # --- APLICAÇÃO DA GEOMETRIA SQRT(3) ---
+      # --- APLICAÇÃO DA GEOMETRIA SQRT(3) CORRIGIDA ---
         if mostrar_fib_sqrt3:
             p_max = df_plot['Mercado'].max()
             p_min = df_plot['Mercado'].min()
+            
+            # Encontra as datas exatas onde o BTC formou o Topo e o Fundo
+            date_max = df_plot.loc[df_plot['Mercado'].idxmax(), 'Data']
+            date_min = df_plot.loc[df_plot['Mercado'].idxmin(), 'Data']
+            
+            # A geometria só começa a ser desenhada a partir do início do movimento (Pivô)
+            start_date = min(date_max, date_min)
+            end_date = df_plot['Data'].iloc[-1]
+            
             diff = p_max - p_min
             
             # Cálculo dos Níveis baseados em potências de (1/√3)
-            # Fib 23.6% -> Sqrt(3) ~ 19.2%
             nivel_1 = 1 / (math.sqrt(3)**3) 
-            # Fib 38.2% -> Sqrt(3) ~ 33.3%
             nivel_2 = 1 / 3                 
-            # Fib 61.8% -> Sqrt(3) ~ 57.7%
             nivel_3 = 1 / math.sqrt(3)      
             
-            # Traçando Retrações (Eixo Esq)
-            fig.add_hline(y=p_max, line_dash="dot", line_color="rgba(150, 150, 150, 0.4)", annotation_text="Topo 0%", row=1, col=1, secondary_y=False)
-            fig.add_hline(y=p_max - diff * nivel_1, line_dash="dot", line_color="rgba(255, 255, 0, 0.6)", annotation_text="Retração 19.2%", row=1, col=1, secondary_y=False)
-            fig.add_hline(y=p_max - diff * nivel_2, line_dash="dot", line_color="rgba(255, 165, 0, 0.6)", annotation_text="Retração 33.3%", row=1, col=1, secondary_y=False)
-            fig.add_hline(y=p_max - diff * nivel_3, line_dash="dot", line_color="rgba(255, 0, 0, 0.6)", annotation_text="Retração 57.7%", row=1, col=1, secondary_y=False)
-            fig.add_hline(y=p_min, line_dash="dot", line_color="rgba(150, 150, 150, 0.4)", annotation_text="Fundo 100%", row=1, col=1, secondary_y=False)
+            niveis_geom = {
+                "Topo 0%": (p_max, "rgba(150, 150, 150, 0.5)"),
+                "Retração 19.2%": (p_max - diff * nivel_1, "rgba(255, 255, 0, 0.7)"),
+                "Retração 33.3%": (p_max - diff * nivel_2, "rgba(255, 165, 0, 0.7)"),
+                "Retração 57.7%": (p_max - diff * nivel_3, "rgba(255, 0, 0, 0.7)"),
+                "Fundo 100%": (p_min, "rgba(150, 150, 150, 0.5)"),
+                "Expansão 173.2% (√3)": (p_min + diff * math.sqrt(3), "rgba(0, 255, 0, 0.8)")
+            }
             
-            # Traçando a Expansão de Crescimento √3 (Target de Ciclo)
-            fig.add_hline(y=p_min + diff * math.sqrt(3), line_dash="dash", line_color="rgba(0, 255, 0, 0.7)", annotation_text="Expansão 173.2% (√3)", row=1, col=1, secondary_y=False)
-
-        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
-        fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
-        fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="1/DXY", row=2, col=1, secondary_y=True, showgrid=False)
+            # Desenha segmentos de reta (vetores) em vez de linhas infinitas
+            for nome, (valor, cor) in niveis_geom.items():
+                fig.add_trace(go.Scatter(
+                    x=[start_date, end_date], 
+                    y=[valor, valor],
+                    mode='lines',
+                    name=nome,
+                    line=dict(color=cor, width=2, dash='dot'),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ), row=1, col=1, secondary_y=False)
+                
+                # Adiciona o rótulo ancorado no início do traço do Bitcoin
+                fig.add_annotation(
+                    x=start_date, y=valor,
+                    text=nome,
+                    showarrow=False,
+                    yshift=8,
+                    xanchor='left',
+                    font=dict(color=cor, size=10, family="Arial"),
+                    row=1, col=1, secondary_y=False
+                )
         
         st.plotly_chart(fig, use_container_width=True)
 
