@@ -47,9 +47,6 @@ if 'opt_buy' not in st.session_state: st.session_state.opt_buy = 90
 if 'opt_sell' not in st.session_state: st.session_state.opt_sell = 10
 if 'opt_zscore' not in st.session_state: st.session_state.opt_zscore = 4.0
 
-if 'opt_orac_defasagem' not in st.session_state: st.session_state.opt_orac_defasagem = 14
-if 'opt_orac_k' not in st.session_state: st.session_state.opt_orac_k = 1.5
-
 # ==========================================
 # 2. CONFIGURAÇÃO E DADOS BASE
 # ==========================================
@@ -197,16 +194,6 @@ janela_cin = st.sidebar.slider("Janela Momentum (Dias)", 1, 30, int(st.session_s
 sensibilidade = st.sidebar.slider("Força do Modulador", 1.0, 10.0, float(st.session_state.opt_sens), step=0.5)
 z_score_limite = st.sidebar.slider("Limite Crítico MVRV (Z-Score)", 2.0, 8.0, float(st.session_state.opt_zscore), step=0.5)
 
-# --- MENU DO ORÁCULO MATEMÁTICO (AGORA COM NEGATIVOS) ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔮 Oráculo Antecedente (DXY)")
-st.sidebar.markdown("Testes de propagação e antecedência de sinal macro.")
-defasagem = st.sidebar.slider("Defasagem de Preço (Dias)", -60, 60, int(st.session_state.opt_orac_defasagem))
-k_oraculo = st.sidebar.number_input("Constante de Elasticidade (K)", min_value=0.1, max_value=20.0, value=float(st.session_state.opt_orac_k), step=0.1)
-
-st.session_state.opt_orac_defasagem = defasagem
-st.session_state.opt_orac_k = k_oraculo
-
 st.sidebar.markdown("---")
 if st.sidebar.button("Sair (Logout)", use_container_width=True):
     st.session_state.autenticado = False
@@ -243,16 +230,6 @@ if df_hist is not None:
     df_plot = pd.DataFrame(dados_oem)
     df_plot['1_DXY'] = 1 / df_plot['DXY']
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
-
-    # --- MATEMÁTICA DO ORÁCULO DE SINAL ---
-    # Passo 1: Calcula o Choque Logarítmico Inverso do DXY
-    df_plot['Choque_DXY'] = np.log(df_plot['DXY'].shift(janela_cin) / df_plot['DXY']).fillna(0)
-    
-    # Passo 2: Aplica a função de capitalização (Exp * Pi * K) sobre o preço base
-    df_plot['Oraculo_Bruto'] = df_plot['Mercado'] * np.exp(k_oraculo * math.pi * df_plot['Choque_DXY'])
-    
-    # Passo 3: Defasa a série (suporta números negativos perfeitamente agora)
-    df_plot['Oraculo_Plot'] = df_plot['Oraculo_Bruto'].shift(defasagem)
 
     # ==========================================
     # ABA 1: MONITORAMENTO LIVE
@@ -341,11 +318,6 @@ if df_hist is not None:
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
-        
-        # Plota o Oráculo Defasado com o nome adaptado para positivo/negativo
-        sinal = "+" if defasagem > 0 else ""
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Oraculo_Plot'], name=f'Oráculo DXY ({sinal}{defasagem}d)', line=dict(color='#00FA9A', width=2, dash='dot')), row=1, col=1, secondary_y=False)
-
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
