@@ -308,7 +308,6 @@ if df_hist is not None:
         corr_col2.metric("BTC vs Nasdaq 100", f"{corr_ndx:.2f}")
         corr_col3.metric("BTC vs Liquidez (1/DXY)", f"{corr_dxy:.2f}")
 
-        # Specs ajustado para que a 3ª linha suporte eixo Y secundário
         fig = make_subplots(
             rows=3, cols=1, 
             shared_xaxes=True, 
@@ -328,9 +327,9 @@ if df_hist is not None:
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
-        # LINHA 3 (USD/BRL + OEM em escala secundária)
+        # LINHA 3 (USD/BRL + BTC Mercado BRL em escala secundária)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['BRL'], name='USD/BRL', line=dict(color='#00FF00', width=2)), row=3, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (OEM)', line=dict(color='#F7931A', width=1.5, dash='dot'), opacity=0.6), row=3, col=1, secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC (BRL)', line=dict(color='white', width=1.5, dash='dot'), opacity=0.6), row=3, col=1, secondary_y=True)
 
         fig.update_layout(template="plotly_dark", height=850, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
@@ -338,7 +337,7 @@ if df_hist is not None:
         fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title_text="1/DXY", row=2, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Câmbio (R$)", row=3, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="OEM (R$)", row=3, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Preço BTC (R$)", row=3, col=1, secondary_y=True, showgrid=False)
         
         st.plotly_chart(fig, use_container_width=True)
 
