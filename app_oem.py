@@ -308,29 +308,36 @@ if df_hist is not None:
         corr_col2.metric("BTC vs Nasdaq 100", f"{corr_ndx:.2f}")
         corr_col3.metric("BTC vs Liquidez (1/DXY)", f"{corr_dxy:.2f}")
 
+        # Nova estrutura: 3 andares (rows=3)
         fig = make_subplots(
-            rows=2, cols=1, 
+            rows=3, cols=1, 
             shared_xaxes=True, 
-            vertical_spacing=0.08,
-            row_heights=[0.7, 0.3], 
-            specs=[[{"secondary_y": True}], [{"secondary_y": True}]]
+            vertical_spacing=0.06,
+            row_heights=[0.5, 0.25, 0.25], 
+            specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": False}]]
         )
 
+        # LINHA 1: Preços (OEM vs Mercado) e Nasdaq
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
 
+        # LINHA 2: Z-Score e Liquidez (1/DXY)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
         fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1, secondary_y=False)
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
-
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
-        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
+        # LINHA 3: Câmbio USD/BRL
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['BRL'], name='USD/BRL', line=dict(color='#00FF00', width=2)), row=3, col=1, secondary_y=False)
+
+        # Atualizando o Layout e Títulos dos Eixos
+        fig.update_layout(template="plotly_dark", height=850, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
         fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title_text="1/DXY", row=2, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text="Câmbio (R$)", row=3, col=1, secondary_y=False)
         
         st.plotly_chart(fig, use_container_width=True)
 
