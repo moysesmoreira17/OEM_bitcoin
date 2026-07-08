@@ -1,17 +1,3 @@
-Implementar um sistema de telemetria para rastrear exatamente onde o código quebra é a melhor forma de garantir a estabilidade do seu motor quantitativo. Em vez de um grande bloco `try...except` que esconde o problema debaixo do tapete emitindo um genérico *"Erro de Coleta"*, nós precisamos isolar cada chamada de API.
-
-Eu peguei exatamente a versão do código que você enviou (com o painel inferior de USD/BRL e Preço BTC) e reescrevi o núcleo da função `carregar_dados_mercado`.
-
-O que foi feito:
-
-1. **Isolamento de Sensores:** Cada API (FRED, Binance, Blockchain, YFinance) agora tem seu próprio bloco `try...except`.
-2. **Lista de Diagnóstico (`erros_diag`):** O sistema agora anota silenciosamente qual servidor falhou, o código do erro HTTP (se foi um 403 Forbidden, 404 Not Found) ou a falha de conexão.
-3. **Display de Telemetria:** Se algum dado falhar, a tela não fica preta. Ele monta o gráfico com os dados que conseguiu baixar e exibe uma barra de aviso amarela no topo dizendo exatamente quem falhou (Ex: *"⚠️ Telemetria: Operando com dados parciais. Falhas detectadas em: FRED Juros (HTTP 400), YFinance NDX"*).
-4. **Limpeza de indentação:** Retirei os espaços "fantasmas" (`\xa0`) que às vezes quebram o interpretador do Python ao copiar de chats.
-
-Aqui está o seu programa final atualizado com o sistema de diagnóstico embutido. Basta copiar e rodar:
-
-```python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
