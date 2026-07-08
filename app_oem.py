@@ -50,7 +50,6 @@ if 'opt_zscore' not in st.session_state: st.session_state.opt_zscore = 4.0
 # ==========================================
 # 2. CONFIGURAÇÃO E DADOS BASE
 # ==========================================
-# Tenta pegar a chave do FRED sem quebrar se o secrets estiver mal configurado
 FRED_API_KEY = st.secrets.get("FRED_API_KEY", "CHAVE_AUSENTE")
 
 DATA_HALVING = datetime(2024, 4, 19)
@@ -63,7 +62,7 @@ DELTA = 0.5
 
 @st.cache_data(ttl=3600)
 def carregar_dados_mercado(meses):
-    erros_diag = [] # Rastreador de telemetria isolada
+    erros_diag = [] 
     
     hoje = datetime.now()
     inicio = hoje - relativedelta(months=meses)
@@ -71,37 +70,31 @@ def carregar_dados_mercado(meses):
     inicio_str = inicio_query.strftime('%Y-%m-%d')
     
     headers_seguros = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
     }
 
-    # 1. Coleta FRED Juros
+    # 1. FRED Juros
     url_j = f"https://api.stlouisfed.org/fred/series/observations?series_id=DFII10&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
     try:
         r_j = requests.get(url_j, headers=headers_seguros, timeout=10)
-        if r_j.status_code == 200:
-            resp_j = r_j.json().get('observations', [])
-        else:
-            resp_j = []
-            erros_diag.append(f"FRED Juros (HTTP {r_j.status_code})")
+        resp_j = r_j.json().get('observations', []) if r_j.status_code == 200 else []
+        if not resp_j: erros_diag.append(f"FRED Juros (HTTP {r_j.status_code})")
     except Exception as e:
         resp_j = []
-        erros_diag.append(f"FRED Juros (Erro: {str(e)[:30]})")
+        erros_diag.append(f"FRED Juros ({str(e)[:25]})")
 
-    # 2. Coleta FRED M2
+    # 2. FRED M2
     url_m = f"https://api.stlouisfed.org/fred/series/observations?series_id=WM2NS&api_key={FRED_API_KEY}&file_type=json&observation_start={inicio_str}"
     try:
         r_m = requests.get(url_m, headers=headers_seguros, timeout=10)
-        if r_m.status_code == 200:
-            resp_m = r_m.json().get('observations', [])
-        else:
-            resp_m = []
-            erros_diag.append(f"FRED M2 (HTTP {r_m.status_code})")
+        resp_m = r_m.json().get('observations', []) if r_m.status_code == 200 else []
+        if not resp_m: erros_diag.append(f"FRED M2 (HTTP {r_m.status_code})")
     except Exception as e:
         resp_m = []
-        erros_diag.append(f"FRED M2 (Erro: {str(e)[:30]})")
+        erros_diag.append(f"FRED M2 ({str(e)[:25]})")
 
-    # 3. Coleta Binance (BTCUSDT)
+    # 3. Binance BTCUSDT
     start_ms = int(inicio_query.timestamp() * 1000)
     end_ms = int(hoje.timestamp() * 1000)
     dados_btc = []
@@ -120,71 +113,83 @@ def carregar_dados_mercado(meses):
             time.sleep(0.3) 
         except Exception as e:
             tentativas += 1; time.sleep(2)
-            if tentativas == 3: erros_diag.append(f"Binance API (Erro: {str(e)[:30]})")
+            if tentativas == 3: erros_diag.append(f"Binance ({str(e)[:25]})")
 
-    # 4. Coleta Blockchain.info (Dificuldade)
+    # 4. Blockchain.info
     url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+14}months&format=json&sampled=true"
     try:
         r_d = requests.get(url_d, headers=headers_seguros, timeout=10)
-        if r_d.status_code == 200:
-            resp_d = r_d.json().get('values', [])
-        else:
-            resp_d = []
-            erros_diag.append(f"Blockchain.info (HTTP {r_d.status_code})")
+        resp_d = r_d.json().get('values', []) if r_d.status_code == 200 else []
     except Exception as e:
         resp_d = []
-        erros_diag.append(f"Blockchain.info (Erro: {str(e)[:30]})")
+        erros_diag.append(f"Blockchain ({str(e)[:25]})")
 
-    # 5. Coleta Yahoo Finance (Função Segura)
+    # 5. Yahoo Finance (Com proteção Rate Limit)
     def puxar_yf(ticker, nome_coluna):
-        try:
-            df_raw = yf.Ticker(ticker).history(start=inicio_str)[['Close']]
-            df_raw.index = df_raw.index.tz_localize(None).normalize()
-            df_retorno = pd.DataFrame({nome_coluna: df_raw['Close']})
-            df_retorno.index.name = 'date'
-            return df_retorno
-        except Exception as e:
-            erros_diag.append(f"YFinance {ticker} (Erro: {str(e)[:30]})")
-            df_vazio = pd.DataFrame(columns=[nome_coluna])
-            df_vazio.index.name = 'date'
-            return df_vazio
+        tentativas = 0
+        while tentativas < 3:
+            try:
+                df_raw = yf.Ticker(ticker).history(start=inicio_str)[['Close']]
+                if not df_raw.empty:
+                    df_raw.index = df_raw.index.tz_localize(None).normalize()
+                    df_retorno = pd.DataFrame({nome_coluna: df_raw['Close']})
+                    df_retorno.index.name = 'date'
+                    return df_retorno
+            except: pass
+            tentativas += 1
+            time.sleep(1.5) # Pausa de 1.5s entre tentativas para não irritar o servidor
+            
+        erros_diag.append(f"YF {ticker} (Rate Limit/Falha)")
+        df_vazio = pd.DataFrame(columns=[nome_coluna])
+        df_vazio.index.name = 'date'
+        return df_vazio
 
     df_dxy = puxar_yf("DX-Y.NYB", 'DXY')
     df_brl = puxar_yf("BRL=X", 'BRL')
     df_ndx = puxar_yf("^NDX", 'NDX')
+    df_cny = puxar_yf("CNY=X", 'USD_CNY')
 
-    # Estruturação e Formatação Segura dos DataFrames
-    if resp_j:
-        df_j = pd.DataFrame(resp_j)[['date', 'value']].rename(columns={'value':'Juro'}).dropna()
-        df_j['date'], df_j['Juro'] = pd.to_datetime(df_j['date']), pd.to_numeric(df_j['Juro'], errors='coerce')
-    else: df_j = pd.DataFrame(columns=['date', 'Juro'])
+    # Estruturação
+    df_j = pd.DataFrame(resp_j)[['date', 'value']].rename(columns={'value':'Juro'}).dropna() if resp_j else pd.DataFrame(columns=['date', 'Juro'])
+    if not df_j.empty: df_j['date'], df_j['Juro'] = pd.to_datetime(df_j['date']), pd.to_numeric(df_j['Juro'], errors='coerce')
 
-    if resp_m:
-        df_m = pd.DataFrame(resp_m)[['date', 'value']].rename(columns={'value':'M2'}).dropna()
-        df_m['date'], df_m['M2'] = pd.to_datetime(df_m['date']), pd.to_numeric(df_m['M2'], errors='coerce')
-    else: df_m = pd.DataFrame(columns=['date', 'M2'])
+    df_m = pd.DataFrame(resp_m)[['date', 'value']].rename(columns={'value':'M2'}).dropna() if resp_m else pd.DataFrame(columns=['date', 'M2'])
+    if not df_m.empty: df_m['date'], df_m['M2'] = pd.to_datetime(df_m['date']), pd.to_numeric(df_m['M2'], errors='coerce')
 
     df_btc = pd.DataFrame(dados_btc) if dados_btc else pd.DataFrame(columns=['date', 'Preco'])
     if not df_btc.empty: df_btc['date'] = pd.to_datetime(df_btc['date'])
 
-    if resp_d:
-        df_diff = pd.DataFrame([{"date": datetime.fromtimestamp(p['x']), "Diff": p['y']/1e12} for p in resp_d])
-        df_diff['date'] = pd.to_datetime(df_diff['date'])
-    else: df_diff = pd.DataFrame(columns=['date', 'Diff'])
+    df_diff = pd.DataFrame([{"date": datetime.fromtimestamp(p['x']), "Diff": p['y']/1e12} for p in resp_d]) if resp_d else pd.DataFrame(columns=['date', 'Diff'])
+    if not df_diff.empty: df_diff['date'] = pd.to_datetime(df_diff['date'])
 
-    # Join Master
     try:
         df_final = df_j.set_index('date').join(
                    df_m.set_index('date'), how='outer').join(
                    df_dxy, how='outer').join(
                    df_brl, how='outer').join(
                    df_ndx, how='outer').join(
+                   df_cny, how='outer').join(
                    df_btc.set_index('date'), how='outer').join(
-                   df_diff.set_index('date'), how='outer').ffill().dropna()
+                   df_diff.set_index('date'), how='outer')
+
+        # === ESCUDO ANTI-BLECAUTE (FALLBACKS) ===
+        # Se um serviço falhar de entregar a coluna inteira, preenchemos com valores padrão sensatos
+        valores_padrao = {
+            'Juro': 5.0, 'M2': 20000.0, 'DXY': 100.0, 'BRL': 5.0, 
+            'NDX': 15000.0, 'USD_CNY': 7.2, 'Diff': 80.0
+        }
+        
+        df_final = df_final.ffill() # Tenta preencher com o último valor válido conhecido
+        for col, val in valores_padrao.items():
+            if col in df_final.columns:
+                df_final[col] = df_final[col].fillna(val)
+                
+        # Agora só removemos as linhas se o Bitcoin realmente não existir na base de dados
+        df_final = df_final.dropna(subset=['Preco'])
 
         if df_final.empty:
-            st.error("🛑 Falha Crítica: Todos os sensores falharam ou o Join resultou vazio.")
-            if erros_diag: st.error(f"Detalhes: {', '.join(erros_diag)}")
+            st.error("🛑 Falha Crítica: O servidor da Binance não retornou dados do Bitcoin.")
+            if erros_diag: st.error(f"Detalhes dos sensores falhos: {', '.join(erros_diag)}")
             return None
 
         df_final['Mercado_USD'] = df_final['Preco']
@@ -194,14 +199,13 @@ def carregar_dados_mercado(meses):
 
         df_final = df_final[df_final.index >= pd.to_datetime((hoje - relativedelta(months=meses)).strftime('%Y-%m-%d'))]
         
-        # Se houve falhas, avisa na UI silenciosamente, mas entrega o gráfico
         if erros_diag:
-            st.warning(f"⚠️ Alerta de Telemetria: Operando com dados parciais. Falhas detectadas em: {', '.join(erros_diag)}")
+            st.warning(f"⚠️ Operando com Escudo de Segurança. Alguns sensores falharam: {', '.join(erros_diag)}")
             
         return df_final
 
     except Exception as e:
-        st.error(f"🛑 Erro Interno no Processamento Matemático: {e}")
+        st.error(f"🛑 Erro Interno de Processamento: {e}")
         return None
 
 def buscar_preco_live():
@@ -222,6 +226,10 @@ def buscar_brl_live():
 def buscar_ndx_live():
     try: return float(yf.Ticker("^NDX").history(period="1d")['Close'].iloc[-1])
     except: return 15000.0
+
+def buscar_cny_live():
+    try: return float(yf.Ticker("CNY=X").history(period="1d")['Close'].iloc[-1])
+    except: return 7.2
 
 # ==========================================
 # 3. INTERFACE E SIDEBAR 
@@ -254,40 +262,36 @@ if st.sidebar.button("Sair (Logout)", use_container_width=True):
 
 df_hist = carregar_dados_mercado(meses)
 
-if df_hist is not None:
+if df_hist is not None and not df_hist.empty:
     dados_oem = []
     for d, r in df_hist.iterrows():
         anos_g = (d - DATA_GENESIS).days / 365.25
         dxy_atual = r['DXY'] if not pd.isna(r['DXY']) else 100.0
         ndx_atual = r['NDX'] if 'NDX' in r and not pd.isna(r['NDX']) else 15000.0
+        cny_atual = r['USD_CNY'] if 'USD_CNY' in r and not pd.isna(r['USD_CNY']) else 7.2
         fator_dxy = 100.0 / max(50.0, dxy_atual) 
-        
-        # Proteção caso algum dado essencial falte e não quebre a matemática
-        juro_atual = r['Juro'] if 'Juro' in r and not pd.isna(r['Juro']) else 5.0
-        m2_atual = r['M2'] if 'M2' in r and not pd.isna(r['M2']) else 20000.0
-        diff_atual = r['Diff'] if 'Diff' in r and not pd.isna(r['Diff']) else 80.0
-        
-        m2_g = (m2_atual/1000)*4.8
+        m2_g = (r['M2']/1000)*4.8
         penet = 0.05 / (1 + math.exp(-0.4 * (anos_g - 10)))
         liq_e = m2_g * penet * 100 
         m_halv = (d - DATA_HALVING).days / 30.44
         f_amort = 1 + math.log10(max(1, anos_g/4))
         f_ciclo = 1 + ((BETA/f_amort) * math.cos((2*math.pi*m_halv)/48))
         f_esc = 1 + (0.02 * max(0, (d - DATA_PICO_EXCHANGES).days/365.25)) 
-        den = max(0.1, juro_atual + DELTA)
+        den = max(0.1, r['Juro'] + DELTA)
         
-        p_oem_usd = ALPHA * (liq_e/den) * f_ciclo * diff_atual * f_esc * fator_dxy
+        p_oem_usd = ALPHA * (liq_e/den) * f_ciclo * r['Diff'] * f_esc * fator_dxy
         brl_rate = r['BRL'] if 'BRL' in r and not pd.isna(r['BRL']) else 5.0
         p_oem_brl = p_oem_usd * brl_rate
         mercado_brl = r['Preco'] * brl_rate
         
         dados_oem.append({
             "Data": d, "OEM": p_oem_brl, "OEM_USD": p_oem_usd, "Mercado": mercado_brl, 
-            "DXY": dxy_atual, "BRL": brl_rate, "NDX": ndx_atual, "Z_Score": r['Z_Score']
+            "DXY": dxy_atual, "BRL": brl_rate, "NDX": ndx_atual, "USD_CNY": cny_atual, "Z_Score": r['Z_Score']
         })
     
     df_plot = pd.DataFrame(dados_oem)
     df_plot['1_DXY'] = 1 / df_plot['DXY']
+    df_plot['CNY_USD'] = 1 / df_plot['USD_CNY']
     df_plot['dBTC_dt'] = df_plot['Mercado'].pct_change(periods=janela_cin).fillna(0)
 
     # ==========================================
@@ -299,6 +303,7 @@ if df_hist is not None:
         dxy_agora = buscar_dxy_live()
         brl_agora = buscar_brl_live()
         ndx_agora = buscar_ndx_live()
+        cny_agora = buscar_cny_live()
         
         preco_brl_agora = preco_usd_agora * brl_agora if preco_usd_agora and brl_agora else None
         
@@ -306,6 +311,9 @@ if df_hist is not None:
         if dxy_agora: df_plot.iloc[-1, df_plot.columns.get_loc('DXY')] = dxy_agora
         if brl_agora: df_plot.iloc[-1, df_plot.columns.get_loc('BRL')] = brl_agora
         if ndx_agora: df_plot.iloc[-1, df_plot.columns.get_loc('NDX')] = ndx_agora
+        if cny_agora: 
+            df_plot.iloc[-1, df_plot.columns.get_loc('USD_CNY')] = cny_agora
+            df_plot.iloc[-1, df_plot.columns.get_loc('CNY_USD')] = 1 / cny_agora
         df_plot.iloc[-1, df_plot.columns.get_loc('1_DXY')] = 1 / dxy_agora if dxy_agora else 0
 
         u = df_plot.iloc[-1]
@@ -361,11 +369,13 @@ if df_hist is not None:
         corr_oem = df_plot['Mercado'].corr(df_plot['OEM'])
         corr_ndx = df_plot['Mercado'].corr(df_plot['NDX'])
         corr_dxy = df_plot['Mercado'].corr(df_plot['1_DXY'])
+        corr_cny = df_plot['Mercado'].corr(df_plot['CNY_USD'])
         
-        corr_col1, corr_col2, corr_col3 = st.columns(3)
+        corr_col1, corr_col2, corr_col3, corr_col4 = st.columns(4)
         corr_col1.metric("BTC vs Valor Justo (OEM)", f"{corr_oem:.2f}")
         corr_col2.metric("BTC vs Nasdaq 100", f"{corr_ndx:.2f}")
         corr_col3.metric("BTC vs Liquidez (1/DXY)", f"{corr_dxy:.2f}")
+        corr_col4.metric("BTC vs Força do Yuan", f"{corr_cny:.2f}")
 
         fig = make_subplots(
             rows=3, cols=1, 
@@ -382,13 +392,12 @@ if df_hist is not None:
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
         fig.add_hline(y=z_score_limite, line_dash="dash", line_color="red", annotation_text="Limite Crítico", row=2, col=1, secondary_y=False)
         fig.add_hline(y=0, line_dash="solid", line_color="rgba(255, 255, 255, 0.3)", row=2, col=1, secondary_y=False)
-
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['BRL'], name='USD/BRL', line=dict(color='#00FF00', width=2)), row=3, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC (BRL)', line=dict(color='white', width=1.5, dash='dot'), opacity=0.6), row=3, col=1, secondary_y=True)
 
-        fig.update_layout(template="plotly_dark", height=700, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
+        fig.update_layout(template="plotly_dark", height=850, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
         fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
         fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
