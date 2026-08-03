@@ -52,16 +52,31 @@ if 'opt_zscore' not in st.session_state: st.session_state.opt_zscore = 4.0
 # ==========================================
 FRED_API_KEY = st.secrets.get("FRED_API_KEY", "CHAVE_AUSENTE")
 
-DATA_HALVING = datetime(2024, 4, 19)
-DATA_GENESIS = datetime(2009, 1, 3)
+DATA_HALVING_GLOBAL = datetime(2024, 4, 19) # Relógio Cripto Global
 DATA_PICO_EXCHANGES = datetime(2020, 3, 12)
 
-ALPHA = 3.4   
-BETA = 0.18   
-DELTA = 0.5   
+# ==========================================
+# INTERFACE: SELEÇÃO DE ATIVO
+# ==========================================
+st.sidebar.title("⚙️ Controle OEM")
+ativo_selecionado = st.sidebar.selectbox("🪙 Ativo Operacional", ["Bitcoin (BTC)", "Ethereum (ETH)"])
+
+# Constantes dinâmicas baseadas no ativo escolhido
+if ativo_selecionado == "Bitcoin (BTC)":
+    SIMBOLO_BINANCE = "BTCUSDT"
+    DATA_GENESIS = datetime(2009, 1, 3)
+    ALPHA_ATIVO = 3.4
+    BETA_ATIVO = 0.18
+    DELTA_ATIVO = 0.5
+else:
+    SIMBOLO_BINANCE = "ETHUSDT"
+    DATA_GENESIS = datetime(2015, 7, 30)
+    ALPHA_ATIVO = 0.15   # Escalonado para o preço do ETH
+    BETA_ATIVO = 0.28    # ETH tem maior volatilidade cíclica
+    DELTA_ATIVO = 0.5
 
 @st.cache_data(ttl=3600)
-def carregar_dados_mercado(meses):
+def carregar_dados_mercado(meses, simbolo):
     erros_diag = [] 
     
     hoje = datetime.now()
@@ -94,13 +109,13 @@ def carregar_dados_mercado(meses):
         resp_m = []
         erros_diag.append(f"FRED M2 ({str(e)[:25]})")
 
-    # 3. Binance BTCUSDT
+    # 3. Binance (Dinâmico para BTC ou ETH)
     start_ms = int(inicio_query.timestamp() * 1000)
     end_ms = int(hoje.timestamp() * 1000)
-    dados_btc = []
+    dados_cripto = []
     tentativas = 0
     while start_ms < end_ms and tentativas < 3:
-        url_b = f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=1000"
+        url_b = f"https://data-api.binance.vision/api/v3/klines?symbol={simbolo}&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=1000"
         try:
             resposta = requests.get(url_b, headers=headers_seguros, timeout=10)
             if resposta.status_code != 200:
@@ -108,14 +123,14 @@ def carregar_dados_mercado(meses):
             resp_b = resposta.json()
             if not resp_b or isinstance(resp_b, dict): break
             for c in resp_b:
-                dados_btc.append({"date": datetime.fromtimestamp(c[0]/1000.0), "Preco": float(c[4])})
+                dados_cripto.append({"date": datetime.fromtimestamp(c[0]/1000.0), "Preco": float(c[4])})
             start_ms = resp_b[-1][0] + 86400000 
             time.sleep(0.3) 
         except Exception as e:
             tentativas += 1; time.sleep(2)
             if tentativas == 3: erros_diag.append(f"Binance ({str(e)[:25]})")
 
-    # 4. Blockchain.info
+    # 4. Blockchain.info (Sempre puxamos a Diff do BTC como Proxy Global de Segurança Cripto)
     url_d = f"https://api.blockchain.info/charts/difficulty?timespan={meses+14}months&format=json&sampled=true"
     try:
         r_d = requests.get(url_d, headers=headers_seguros, timeout=10)
@@ -137,7 +152,7 @@ def carregar_dados_mercado(meses):
                     return df_retorno
             except: pass
             tentativas += 1
-            time.sleep(1.5) # Pausa de 1.5s entre tentativas para não irritar o servidor
+            time.sleep(1.5) 
             
         erros_diag.append(f"YF {ticker} (Rate Limit/Falha)")
         df_vazio = pd.DataFrame(columns=[nome_coluna])
@@ -156,8 +171,8 @@ def carregar_dados_mercado(meses):
     df_m = pd.DataFrame(resp_m)[['date', 'value']].rename(columns={'value':'M2'}).dropna() if resp_m else pd.DataFrame(columns=['date', 'M2'])
     if not df_m.empty: df_m['date'], df_m['M2'] = pd.to_datetime(df_m['date']), pd.to_numeric(df_m['M2'], errors='coerce')
 
-    df_btc = pd.DataFrame(dados_btc) if dados_btc else pd.DataFrame(columns=['date', 'Preco'])
-    if not df_btc.empty: df_btc['date'] = pd.to_datetime(df_btc['date'])
+    df_cripto = pd.DataFrame(dados_cripto) if dados_cripto else pd.DataFrame(columns=['date', 'Preco'])
+    if not df_cripto.empty: df_cripto['date'] = pd.to_datetime(df_cripto['date'])
 
     df_diff = pd.DataFrame([{"date": datetime.fromtimestamp(p['x']), "Diff": p['y']/1e12} for p in resp_d]) if resp_d else pd.DataFrame(columns=['date', 'Diff'])
     if not df_diff.empty: df_diff['date'] = pd.to_datetime(df_diff['date'])
@@ -169,27 +184,25 @@ def carregar_dados_mercado(meses):
                    df_brl, how='outer').join(
                    df_ndx, how='outer').join(
                    df_cny, how='outer').join(
-                   df_btc.set_index('date'), how='outer').join(
+                   df_cripto.set_index('date'), how='outer').join(
                    df_diff.set_index('date'), how='outer')
 
-        # === ESCUDO ANTI-BLECAUTE (FALLBACKS) ===
-        # Se um serviço falhar de entregar a coluna inteira, preenchemos com valores padrão sensatos
+        # Escudo Anti-Blecaute
         valores_padrao = {
             'Juro': 5.0, 'M2': 20000.0, 'DXY': 100.0, 'BRL': 5.0, 
             'NDX': 15000.0, 'USD_CNY': 7.2, 'Diff': 80.0
         }
         
-        df_final = df_final.ffill() # Tenta preencher com o último valor válido conhecido
+        df_final = df_final.ffill()
         for col, val in valores_padrao.items():
             if col in df_final.columns:
                 df_final[col] = df_final[col].fillna(val)
                 
-        # Agora só removemos as linhas se o Bitcoin realmente não existir na base de dados
         df_final = df_final.dropna(subset=['Preco'])
 
         if df_final.empty:
-            st.error("🛑 Falha Crítica: O servidor da Binance não retornou dados do Bitcoin.")
-            if erros_diag: st.error(f"Detalhes dos sensores falhos: {', '.join(erros_diag)}")
+            st.error(f"🛑 Falha Crítica: O servidor não retornou dados para {ativo_selecionado}.")
+            if erros_diag: st.error(f"Detalhes: {', '.join(erros_diag)}")
             return None
 
         df_final['Mercado_USD'] = df_final['Preco']
@@ -208,10 +221,10 @@ def carregar_dados_mercado(meses):
         st.error(f"🛑 Erro Interno de Processamento: {e}")
         return None
 
-def buscar_preco_live():
+def buscar_preco_live(simbolo):
     try: 
         headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get("https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT", headers=headers, timeout=5)
+        r = requests.get(f"https://data-api.binance.vision/api/v3/ticker/price?symbol={simbolo}", headers=headers, timeout=5)
         return float(r.json()['price']) if r.status_code == 200 else None
     except: return None
 
@@ -231,19 +244,15 @@ def buscar_cny_live():
     try: return float(yf.Ticker("CNY=X").history(period="1d")['Close'].iloc[-1])
     except: return 7.2
 
-# ==========================================
-# 3. INTERFACE E SIDEBAR 
-# ==========================================
-st.sidebar.title("⚙️ Controle OEM")
 aba_selecionada = st.sidebar.radio("Modo", ["Monitoramento Live", "Prova Matemática (Backtest)", "🔥 Otimizador Global (Consenso)"])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 
 risco = st.sidebar.slider("Agressividade Dinâmica Base", 1.0, 5.0, float(st.session_state.opt_risco), step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("💼 Seu Portfólio Live")
+st.sidebar.subheader(f"💼 Seu Portfólio Live ({ativo_selecionado[:3]})")
 caixa = st.sidebar.number_input("Saldo em Caixa (BRL)", min_value=0.0, value=100.0, step=50.0)
-saldo_btc = st.sidebar.number_input("Saldo em Bitcoin (BTC)", min_value=0.0, value=0.0009, step=0.000100, format="%.4f")
+saldo_cripto = st.sidebar.number_input(f"Saldo em {ativo_selecionado}", min_value=0.0, value=0.0, step=0.01, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ Limites de Execução")
@@ -260,26 +269,34 @@ if st.sidebar.button("Sair (Logout)", use_container_width=True):
     st.session_state.autenticado = False
     st.rerun()
 
-df_hist = carregar_dados_mercado(meses)
+df_hist = carregar_dados_mercado(meses, SIMBOLO_BINANCE)
 
 if df_hist is not None and not df_hist.empty:
     dados_oem = []
     for d, r in df_hist.iterrows():
-        anos_g = (d - DATA_GENESIS).days / 365.25
+        # A física do tempo agora depende do ativo escolhido
+        anos_g = max(0.1, (d - DATA_GENESIS).days / 365.25)
         dxy_atual = r['DXY'] if not pd.isna(r['DXY']) else 100.0
         ndx_atual = r['NDX'] if 'NDX' in r and not pd.isna(r['NDX']) else 15000.0
         cny_atual = r['USD_CNY'] if 'USD_CNY' in r and not pd.isna(r['USD_CNY']) else 7.2
         fator_dxy = 100.0 / max(50.0, dxy_atual) 
-        m2_g = (r['M2']/1000)*4.8
+        
+        juro_atual = r['Juro'] if 'Juro' in r and not pd.isna(r['Juro']) else 5.0
+        m2_atual = r['M2'] if 'M2' in r and not pd.isna(r['M2']) else 20000.0
+        diff_atual = r['Diff'] if 'Diff' in r and not pd.isna(r['Diff']) else 80.0
+        
+        m2_g = (m2_atual/1000)*4.8
         penet = 0.05 / (1 + math.exp(-0.4 * (anos_g - 10)))
         liq_e = m2_g * penet * 100 
-        m_halv = (d - DATA_HALVING).days / 30.44
-        f_amort = 1 + math.log10(max(1, anos_g/4))
-        f_ciclo = 1 + ((BETA/f_amort) * math.cos((2*math.pi*m_halv)/48))
-        f_esc = 1 + (0.02 * max(0, (d - DATA_PICO_EXCHANGES).days/365.25)) 
-        den = max(0.1, r['Juro'] + DELTA)
         
-        p_oem_usd = ALPHA * (liq_e/den) * f_ciclo * r['Diff'] * f_esc * fator_dxy
+        # O relógio cripto global (Halving do BTC governa a liquidez geral)
+        m_halv = (d - DATA_HALVING_GLOBAL).days / 30.44
+        f_amort = 1 + math.log10(max(1, anos_g/4))
+        f_ciclo = 1 + ((BETA_ATIVO/f_amort) * math.cos((2*math.pi*m_halv)/48))
+        f_esc = 1 + (0.02 * max(0, (d - DATA_PICO_EXCHANGES).days/365.25)) 
+        den = max(0.1, juro_atual + DELTA_ATIVO)
+        
+        p_oem_usd = ALPHA_ATIVO * (liq_e/den) * f_ciclo * diff_atual * f_esc * fator_dxy
         brl_rate = r['BRL'] if 'BRL' in r and not pd.isna(r['BRL']) else 5.0
         p_oem_brl = p_oem_usd * brl_rate
         mercado_brl = r['Preco'] * brl_rate
@@ -298,8 +315,8 @@ if df_hist is not None and not df_hist.empty:
     # ABA 1: MONITORAMENTO LIVE
     # ==========================================
     if aba_selecionada == "Monitoramento Live":
-        st.title("📡 Terminal OEM - Tempo Real")
-        preco_usd_agora = buscar_preco_live()
+        st.title(f"📡 Terminal OEM - {ativo_selecionado}")
+        preco_usd_agora = buscar_preco_live(SIMBOLO_BINANCE)
         dxy_agora = buscar_dxy_live()
         brl_agora = buscar_brl_live()
         ndx_agora = buscar_ndx_live()
@@ -331,8 +348,8 @@ if df_hist is not None and not df_hist.empty:
         if z_score_live >= z_score_limite:
             status = "🚨 SATURAÇÃO MVRV (FUGA FORÇADA)"
             porcentagem = max_sell_pct 
-            qtd_venda = saldo_btc * porcentagem
-            recomendacao = f"Bolha Sistêmica: Venda {qtd_venda:.4f} BTC Imediatamente (~R$ {qtd_venda * u['Mercado']:,.2f})"
+            qtd_venda = saldo_cripto * porcentagem
+            recomendacao = f"Bolha Sistêmica: Venda {qtd_venda:.4f} {ativo_selecionado[:3]} Imediatamente (~R$ {qtd_venda * u['Mercado']:,.2f})"
             acao_cor = "#FF00FF"
         elif delta > 0.02:
             modulador_compra = max(0.2, min(1 - (derivada_live * sensibilidade), 2.0))
@@ -346,8 +363,8 @@ if df_hist is not None and not df_hist.empty:
             forca_venda = (abs(delta) * (risco / 2)) * modulador_venda
             porcentagem = min(max_sell_pct, forca_venda) 
             status = "🔴 VENDA PARCIAL"
-            qtd_venda = saldo_btc * porcentagem
-            recomendacao = f"Venda {qtd_venda:.4f} BTC (Receba ~R$ {qtd_venda * u['Mercado']:,.2f})"
+            qtd_venda = saldo_cripto * porcentagem
+            recomendacao = f"Venda {qtd_venda:.4f} {ativo_selecionado[:3]} (Receba ~R$ {qtd_venda * u['Mercado']:,.2f})"
             acao_cor = "#FF0000"
         else:
             status = "🔵 DCA PASSIVO"
@@ -355,8 +372,8 @@ if df_hist is not None and not df_hist.empty:
             acao_cor = "#00BFFF"
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Preço Justo (OEM BRL)", f"R$ {oem_corrigido_brl:,.0f}")
-        c2.metric("Preço Mercado (BRL)", f"R$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
+        c1.metric(f"Preço Justo OEM (BRL)", f"R$ {oem_corrigido_brl:,.0f}")
+        c2.metric(f"Mercado {ativo_selecionado[:3]} (BRL)", f"R$ {u['Mercado']:,.0f}", f"{delta*100:.2f}% (Delta OEM)")
         c3.metric("Risco Z-Score", f"{z_score_live:.2f}", f"Limite em {z_score_limite:.1f}", delta_color="inverse")
         
         with c4:
@@ -365,17 +382,17 @@ if df_hist is not None and not df_hist.empty:
 
         st.markdown("---")
         
-        st.markdown(f"#### 🔗 Correlações Estruturais (Baseado na janela de {meses} meses)")
+        st.markdown(f"#### 🔗 Correlações Estruturais da Matriz ({meses} meses)")
         corr_oem = df_plot['Mercado'].corr(df_plot['OEM'])
         corr_ndx = df_plot['Mercado'].corr(df_plot['NDX'])
         corr_dxy = df_plot['Mercado'].corr(df_plot['1_DXY'])
         corr_cny = df_plot['Mercado'].corr(df_plot['CNY_USD'])
         
         corr_col1, corr_col2, corr_col3, corr_col4 = st.columns(4)
-        corr_col1.metric("BTC vs Valor Justo (OEM)", f"{corr_oem:.2f}")
-        corr_col2.metric("BTC vs Nasdaq 100", f"{corr_ndx:.2f}")
-        corr_col3.metric("BTC vs Liquidez (1/DXY)", f"{corr_dxy:.2f}")
-        corr_col4.metric("BTC vs Força do Yuan", f"{corr_cny:.2f}")
+        corr_col1.metric(f"{ativo_selecionado[:3]} vs OEM", f"{corr_oem:.2f}")
+        corr_col2.metric(f"{ativo_selecionado[:3]} vs Nasdaq", f"{corr_ndx:.2f}")
+        corr_col3.metric(f"{ativo_selecionado[:3]} vs 1/DXY", f"{corr_dxy:.2f}")
+        corr_col4.metric(f"{ativo_selecionado[:3]} vs Yuan", f"{corr_cny:.2f}")
 
         fig = make_subplots(
             rows=3, cols=1, 
@@ -386,7 +403,7 @@ if df_hist is not None and not df_hist.empty:
         )
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['OEM'], name='Valor Justo (R$)', line=dict(color='#F7931A', width=3)), row=1, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço Mercado (R$)', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name=f'Mercado {ativo_selecionado[:3]}', line=dict(color='white', width=1.5, dash='dash')), row=1, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['NDX'], name='Nasdaq 100', line=dict(color='#00FFFF', width=2)), row=1, col=1, secondary_y=True)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Z_Score'], fill='tozeroy', name='Z-Score', line=dict(color='#FF00FF')), row=2, col=1, secondary_y=False)
@@ -395,15 +412,15 @@ if df_hist is not None and not df_hist.empty:
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['1_DXY'], name='1/DXY (Liquidez)', line=dict(color='#00BFFF', width=1, dash='dot'), opacity=0.4), row=2, col=1, secondary_y=True)
 
         fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['BRL'], name='USD/BRL', line=dict(color='#00FF00', width=2)), row=3, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name='Preço BTC (BRL)', line=dict(color='white', width=1.5, dash='dot'), opacity=0.6), row=3, col=1, secondary_y=True)
+        fig.add_trace(go.Scatter(x=df_plot['Data'], y=df_plot['Mercado'], name=f'Preço {ativo_selecionado[:3]} (BRL)', line=dict(color='white', width=1.5, dash='dot'), opacity=0.6), row=3, col=1, secondary_y=True)
 
         fig.update_layout(template="plotly_dark", height=850, margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
-        fig.update_yaxes(title_text="Preço BTC (BRL)", row=1, col=1, secondary_y=False)
+        fig.update_yaxes(title_text=f"Preço {ativo_selecionado[:3]}", row=1, col=1, secondary_y=False)
         fig.update_yaxes(title_text="Nasdaq 100", row=1, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Z-Score", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title_text="1/DXY", row=2, col=1, secondary_y=True, showgrid=False)
         fig.update_yaxes(title_text="Câmbio (R$)", row=3, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Preço BTC (R$)", row=3, col=1, secondary_y=True, showgrid=False)
+        fig.update_yaxes(title_text=f"Preço {ativo_selecionado[:3]} (R$)", row=3, col=1, secondary_y=True, showgrid=False)
         
         st.plotly_chart(fig, use_container_width=True)
 
@@ -411,11 +428,11 @@ if df_hist is not None and not df_hist.empty:
     # ABA 2: BACKTEST
     # ==========================================
     elif aba_selecionada == "Prova Matemática (Backtest)":
-        st.title("🧪 Mesa de Teste de Estresse (Backtest)")
+        st.title(f"🧪 Mesa de Teste de Estresse ({ativo_selecionado})")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         with c_fin1: start_brl = st.number_input("Valor Investido (BRL)", min_value=0.0, value=5000.0, step=500.0)
-        with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
+        with c_fin2: start_btc = st.number_input(f"Saldo Inicial ({ativo_selecionado[:3]})", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa da Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
             
@@ -503,7 +520,7 @@ if df_hist is not None and not df_hist.empty:
         with c3:
             st.subheader("Carteira Final OEM")
             st.metric("Caixa Restante", f"R$ {caixa_oem:,.2f}")
-            st.metric("Saldo em BTC", f"{btc_oem:.5f} BTC")
+            st.metric(f"Saldo em {ativo_selecionado[:3]}", f"{btc_oem:.5f} {ativo_selecionado[:3]}")
             st.metric("Total Injetado", f"R$ {total_investido_oem:,.2f}")
 
         st.markdown("---")
@@ -521,12 +538,12 @@ if df_hist is not None and not df_hist.empty:
     # ABA 3: OTIMIZADOR GLOBAL (CONSENSO)
     # ==========================================
     elif aba_selecionada == "🔥 Otimizador Global (Consenso)":
-        st.title("🔥 Matriz Global de Consenso")
+        st.title(f"🔥 Matriz Global de Consenso ({ativo_selecionado[:3]})")
         st.markdown("O sistema buscará a combinação que performa melhor **através de todas as janelas de tempo simultaneamente**, garantindo estabilidade e eliminando a dependência do ruído.")
         
         c_fin1, c_fin2, c_fin3, c_fin4 = st.columns(4)
         with c_fin1: start_brl = st.number_input("Valor Investido Inicial (BRL)", min_value=0.0, value=5000.0, step=500.0)
-        with c_fin2: start_btc = st.number_input("Saldo Inicial (BTC)", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
+        with c_fin2: start_btc = st.number_input(f"Saldo Inicial ({ativo_selecionado[:3]})", min_value=0.0, value=0.0000, step=0.01, format="%.4f")
         with c_fin3: aporte_mensal = st.number_input("Aporte Mensal (BRL)", min_value=0.0, value=1000.0, step=100.0)
         with c_fin4: taxa_corretora = st.number_input("Taxa Corretora (%)", min_value=0.0, value=0.10, step=0.05) / 100.0
 
