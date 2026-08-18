@@ -4,5 +4,5 @@ numpy
 streamlit
 plotly
 requests
-tensorflow
+tensorflow-cpu
 scikit-learn
