@@ -11,16 +11,7 @@ import yfinance as yf
 import numpy as np
 import itertools 
 
-# ==========================================
-# TENTATIVA DE CARREGAR BIBLIOTECAS DE IA
-# ==========================================
-try:
-    from sklearn.preprocessing import MinMaxScaler
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout
-    IA_DISPONIVEL = True
-except ImportError:
-    IA_DISPONIVEL = False
+# Removida a importação global pesada do TensorFlow daqui do topo!
 
 # ==========================================
 # 0. PORTA DO COFRE (LOGIN INSTITUCIONAL)
@@ -687,106 +678,105 @@ if df_hist is not None and not df_hist.empty:
                 except Exception: pass
 
     # ==========================================
-    # ABA 4: INTELIGÊNCIA ARTIFICIAL (LSTM)
+    # ABA 4: INTELIGÊNCIA ARTIFICIAL (LSTM) - LAZY LOADING
     # ==========================================
     elif aba_selecionada == "🧠 Inteligência Artificial (LSTM)":
         st.title(f"🧠 Projeção Neural LSTM ({ticker_curto})")
         st.markdown("Rede Neural Recorrente treinada *on the fly* com os vetores macroeconômicos do OEM para projetar direcionalidade de curtíssimo prazo.")
 
-        if not IA_DISPONIVEL:
-            st.error("⚠️ **Módulo de Inteligência Artificial Desativado.**")
-            st.markdown("""
-            Para ativar este módulo, você precisa instalar o TensorFlow e o Scikit-Learn no seu ambiente. 
-            Abra o terminal e digite:
-            `pip install tensorflow scikit-learn`
-            """)
-        else:
-            c_lstm1, c_lstm2 = st.columns(2)
-            with c_lstm1:
-                dias_projecao = st.slider("Dias a Projetar no Futuro", 1, 14, 7)
-            with c_lstm2:
-                janela_memoria = st.slider("Janela de Memória LSTM (Lookback)", 7, 60, 30)
+        c_lstm1, c_lstm2 = st.columns(2)
+        with c_lstm1:
+            dias_projecao = st.slider("Dias a Projetar no Futuro", 1, 14, 7)
+        with c_lstm2:
+            janela_memoria = st.slider("Janela de Memória LSTM (Lookback)", 7, 60, 30)
 
-            if st.button("🚀 Iniciar Treinamento da Rede Neural", use_container_width=True):
-                with st.spinner(f"Construindo e treinando a rede neural LSTM para {ticker_curto}. Isso pode levar de 15 a 30 segundos..."):
+        if st.button("🚀 Iniciar Treinamento da Rede Neural", use_container_width=True):
+            with st.spinner(f"Acordando a IA e treinando a rede neural LSTM para {ticker_curto}. Isso pode levar até um minuto..."):
+                try:
+                    # O "peso" gigantesco do TensorFlow só é chamado para a RAM NESTE exato momento
+                    from sklearn.preprocessing import MinMaxScaler
+                    import tensorflow as tf
+                    from tensorflow.keras.models import Sequential
+                    from tensorflow.keras.layers import LSTM, Dense, Dropout
+                    
+                    # Tenta limitar as threads para não estourar a CPU do servidor gratuito
                     try:
-                        # 1. Preparação dos Dados (Features)
-                        features = ['Mercado', 'Z_Score', '1_DXY', 'NDX']
-                        df_lstm = df_plot[features].copy().dropna()
+                        tf.config.threading.set_inter_op_parallelism_threads(1)
+                        tf.config.threading.set_intra_op_parallelism_threads(1)
+                    except: pass
+                    
+                    # 1. Preparação dos Dados (Features)
+                    features = ['Mercado', 'Z_Score', '1_DXY', 'NDX']
+                    df_lstm = df_plot[features].copy().dropna()
+                    
+                    scaler = MinMaxScaler(feature_range=(0, 1))
+                    dados_escalados = scaler.fit_transform(df_lstm.values)
+                    
+                    # 2. Criação das Sequências Temporais
+                    X, y = [], []
+                    for i in range(janela_memoria, len(dados_escalados)):
+                        X.append(dados_escalados[i - janela_memoria:i])
+                        y.append(dados_escalados[i, 0]) 
+                    
+                    X, y = np.array(X), np.array(y)
+                    
+                    # 3. Arquitetura da Rede Neural (Super Leve)
+                    modelo = Sequential()
+                    modelo.add(LSTM(units=16, return_sequences=False, input_shape=(X.shape[1], X.shape[2])))
+                    modelo.add(Dense(units=1))
+                    modelo.compile(optimizer='adam', loss='mean_squared_error')
+                    
+                    # Treinamento On the Fly
+                    modelo.fit(X, y, epochs=5, batch_size=16, verbose=0)
+                    
+                    # 4. Projeção Futura Autoregressiva
+                    ultimos_dados = dados_escalados[-janela_memoria:]
+                    sequencia_atual = ultimos_dados.reshape((1, janela_memoria, len(features)))
+                    
+                    previsoes_escaladas = []
+                    
+                    for _ in range(dias_projecao):
+                        prox_preco_esc = modelo.predict(sequencia_atual, verbose=0)[0][0]
+                        previsoes_escaladas.append(prox_preco_esc)
                         
-                        scaler = MinMaxScaler(feature_range=(0, 1))
-                        dados_escalados = scaler.fit_transform(df_lstm.values)
+                        novo_passo = np.copy(sequencia_atual[0, -1, :])
+                        novo_passo[0] = prox_preco_esc
+                        novo_passo = novo_passo.reshape(1, 1, len(features))
                         
-                        # 2. Criação das Sequências Temporais
-                        X, y = [], []
-                        for i in range(janela_memoria, len(dados_escalados)):
-                            X.append(dados_escalados[i - janela_memoria:i])
-                            y.append(dados_escalados[i, 0]) # Target = Mercado (Preço)
-                        
-                        X, y = np.array(X), np.array(y)
-                        
-                        # 3. Arquitetura da Rede Neural (Leve e Rápida)
-                        modelo = Sequential()
-                        modelo.add(LSTM(units=32, return_sequences=False, input_shape=(X.shape[1], X.shape[2])))
-                        modelo.add(Dropout(0.1))
-                        modelo.add(Dense(units=1))
-                        modelo.compile(optimizer='adam', loss='mean_squared_error')
-                        
-                        # Treinamento On the Fly
-                        modelo.fit(X, y, epochs=10, batch_size=16, verbose=0)
-                        
-                        # 4. Projeção Futura Autoregressiva
-                        ultimos_dados = dados_escalados[-janela_memoria:]
-                        sequencia_atual = ultimos_dados.reshape((1, janela_memoria, len(features)))
-                        
-                        previsoes_escaladas = []
-                        
-                        for _ in range(dias_projecao):
-                            # Prevê o próximo preço
-                            prox_preco_esc = modelo.predict(sequencia_atual, verbose=0)[0][0]
-                            previsoes_escaladas.append(prox_preco_esc)
-                            
-                            # Cria o novo passo mantendo as variáveis macro estáticas (simplificação direcional)
-                            novo_passo = np.copy(sequencia_atual[0, -1, :])
-                            novo_passo[0] = prox_preco_esc
-                            novo_passo = novo_passo.reshape(1, 1, len(features))
-                            
-                            # Avança a janela de memória em 1 dia
-                            sequencia_atual = np.append(sequencia_atual[:, 1:, :], novo_passo, axis=1)
-                        
-                        # 5. Desnormalização (Voltar para R$)
-                        matriz_dummy = np.zeros((dias_projecao, len(features)))
-                        matriz_dummy[:, 0] = previsoes_escaladas
-                        precos_projetados = scaler.inverse_transform(matriz_dummy)[:, 0]
-                        
-                        # 6. Preparar o Gráfico
-                        datas_futuras = [df_lstm.index[-1] + timedelta(days=i) for i in range(1, dias_projecao + 1)]
-                        
-                        st.success("✅ Treinamento concluído com sucesso. Projeção gerada.")
-                        
-                        fig_ai = go.Figure()
-                        # Linha Histórica Recente (Últimos 90 dias para não achatar o gráfico)
-                        corte = -90
-                        fig_ai.add_trace(go.Scatter(x=df_lstm.index[corte:], y=df_lstm['Mercado'].iloc[corte:], name='Histórico Real', line=dict(color='white', width=2)))
-                        
-                        # Linha da Projeção Neural
-                        fig_ai.add_trace(go.Scatter(
-                            x=[df_lstm.index[-1]] + datas_futuras, 
-                            y=[df_lstm['Mercado'].iloc[-1]] + list(precos_projetados), 
-                            name='Projeção LSTM', 
-                            line=dict(color='#00FA9A', width=3, dash='dash')
-                        ))
-                        
-                        fig_ai.update_layout(
-                            template="plotly_dark", 
-                            title=f"Visão do Cérebro Neural para os Próximos {dias_projecao} dias", 
-                            hovermode="x unified",
-                            height=500
-                        )
-                        st.plotly_chart(fig_ai, use_container_width=True)
-                        
-                    except Exception as e:
-                        st.error(f"Ocorreu um erro matemático durante o treinamento da rede: {e}")
+                        sequencia_atual = np.append(sequencia_atual[:, 1:, :], novo_passo, axis=1)
+                    
+                    # 5. Desnormalização (Voltar para R$)
+                    matriz_dummy = np.zeros((dias_projecao, len(features)))
+                    matriz_dummy[:, 0] = previsoes_escaladas
+                    precos_projetados = scaler.inverse_transform(matriz_dummy)[:, 0]
+                    
+                    # 6. Preparar o Gráfico
+                    datas_futuras = [df_lstm.index[-1] + timedelta(days=i) for i in range(1, dias_projecao + 1)]
+                    
+                    st.success("✅ Treinamento concluído com sucesso. Projeção gerada.")
+                    
+                    fig_ai = go.Figure()
+                    corte = -90
+                    fig_ai.add_trace(go.Scatter(x=df_lstm.index[corte:], y=df_lstm['Mercado'].iloc[corte:], name='Histórico Real', line=dict(color='white', width=2)))
+                    fig_ai.add_trace(go.Scatter(
+                        x=[df_lstm.index[-1]] + datas_futuras, 
+                        y=[df_lstm['Mercado'].iloc[-1]] + list(precos_projetados), 
+                        name='Projeção LSTM', 
+                        line=dict(color='#00FA9A', width=3, dash='dash')
+                    ))
+                    
+                    fig_ai.update_layout(
+                        template="plotly_dark", 
+                        title=f"Visão do Cérebro Neural para os Próximos {dias_projecao} dias", 
+                        hovermode="x unified",
+                        height=500
+                    )
+                    st.plotly_chart(fig_ai, use_container_width=True)
+                    
+                except ImportError:
+                    st.error("⚠️ As bibliotecas de Inteligência Artificial (TensorFlow e Scikit-Learn) não estão instaladas no servidor. Verifique o seu arquivo requirements.txt.")
+                except Exception as e:
+                    st.error(f"Ocorreu um erro matemático durante o treinamento da rede: {e}")
 
 else:
     st.info("🔄 Conectando aos servidores de dados...")
