@@ -4,3 +4,5 @@ numpy
 streamlit
 plotly
 requests
+tensorflow
+scikit-learn
