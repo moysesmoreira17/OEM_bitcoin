@@ -691,56 +691,45 @@ if df_hist is not None and not df_hist.empty:
         if st.button("🚀 Iniciar Treinamento da Rede Neural", use_container_width=True):
             with st.spinner(f"Construindo e treinando a rede neural MLP para {ticker_curto}. Isso leva apenas alguns segundos..."):
                 try:
-                    # Importação das ferramentas leves do Scikit-Learn
                     from sklearn.preprocessing import MinMaxScaler
                     from sklearn.neural_network import MLPRegressor
                     
-                    # 1. Preparação dos Dados (Features)
                     features = ['Mercado', 'Z_Score', '1_DXY', 'NDX']
-                    df_lstm = df_plot[features].copy().dropna()
+                    # CORREÇÃO CRÍTICA: Transforma a coluna 'Data' no index da tabela
+                    df_lstm = df_plot.set_index('Data')[features].copy().dropna()
                     
                     scaler = MinMaxScaler(feature_range=(0, 1))
                     dados_escalados = scaler.fit_transform(df_lstm.values)
                     
-                    # 2. Criação das Sequências Temporais Achatadas (Flatten)
-                    # O MLP precisa que a janela de tempo seja achatada em uma única dimensão
                     X, y = [], []
                     for i in range(janela_memoria, len(dados_escalados)):
                         X.append(dados_escalados[i - janela_memoria:i].flatten())
-                        y.append(dados_escalados[i, 0]) # Target = Mercado (Preço)
+                        y.append(dados_escalados[i, 0]) 
                     
                     X, y = np.array(X), np.array(y)
                     
-                    # 3. Arquitetura da Rede Neural (2 Camadas Ocultas: 32 e 16 neurônios)
                     modelo = MLPRegressor(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42)
                     
-                    # Treinamento On the Fly
                     modelo.fit(X, y)
                     
-                    # 4. Projeção Futura Autoregressiva
                     ultimos_dados = dados_escalados[-janela_memoria:]
                     
                     previsoes_escaladas = []
                     
                     for _ in range(dias_projecao):
-                        # Achata a janela atual para prever
                         entrada_achatada = ultimos_dados.flatten().reshape(1, -1)
                         prox_preco_esc = modelo.predict(entrada_achatada)[0]
                         previsoes_escaladas.append(prox_preco_esc)
                         
-                        # Cria o novo passo mantendo as variáveis macro estáticas (simplificação direcional)
                         novo_passo = np.copy(ultimos_dados[-1, :])
-                        novo_passo[0] = prox_preco_esc # Atualiza apenas o preço previsto
+                        novo_passo[0] = prox_preco_esc 
                         
-                        # Desliza a janela (tira o dia mais velho, coloca o dia novo)
                         ultimos_dados = np.vstack([ultimos_dados[1:], novo_passo])
                     
-                    # 5. Desnormalização (Voltar para R$)
                     matriz_dummy = np.zeros((dias_projecao, len(features)))
                     matriz_dummy[:, 0] = previsoes_escaladas
                     precos_projetados = scaler.inverse_transform(matriz_dummy)[:, 0]
                     
-                    # 6. Preparar o Gráfico
                     datas_futuras = [df_lstm.index[-1] + timedelta(days=i) for i in range(1, dias_projecao + 1)]
                     
                     st.success("✅ Treinamento concluído com sucesso. Projeção gerada.")
