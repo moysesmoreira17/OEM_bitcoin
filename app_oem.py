@@ -240,7 +240,7 @@ aba_selecionada = st.sidebar.radio("Modo", [
     "Monitoramento Live", 
     "Prova Matemática (Backtest)", 
     "🔥 Otimizador Global (Consenso)",
-    "🧠 Inteligência Artificial (Rede Neural MLP)"
+    "🧠 IA Auto-Tuning (MLP Neural)"
 ])
 meses = st.sidebar.slider("Janela Histórica (Meses)", 1, 120, 48, step=1)
 
@@ -678,61 +678,107 @@ if df_hist is not None and not df_hist.empty:
     # ==========================================
     # ABA 4: INTELIGÊNCIA ARTIFICIAL (MLP LEVE)
     # ==========================================
-    elif aba_selecionada == "🧠 Inteligência Artificial (Rede Neural MLP)":
-        st.title(f"🧠 Projeção Neural MLP ({ticker_curto})")
-        st.markdown("Rede Neural Densa (Multi-Layer Perceptron) treinada *on the fly* com os vetores macroeconômicos do OEM para projetar direcionalidade. **Otimizada para servidores de nuvem de baixo consumo.**")
+    elif aba_selecionada == "🧠 IA Auto-Tuning (MLP Neural)":
+        st.title(f"🧠 Projeção Neural com Auto-Tuning ({ticker_curto})")
+        st.markdown("Rede Neural Densa com **Otimização Dinâmica**. O algoritmo testa diversas janelas projetivas no passado recente (*Out-of-Sample*) para descobrir qual horizonte de tempo possui a maior precisão direcional estatística. Ele então **trava** a projeção nos parâmetros ótimos para o futuro.")
 
-        c_lstm1, c_lstm2 = st.columns(2)
-        with c_lstm1:
-            dias_projecao = st.slider("Dias a Projetar no Futuro", 1, 14, 7)
-        with c_lstm2:
-            janela_memoria = st.slider("Janela de Memória Achatada (Lookback)", 7, 30, 14)
-
-        if st.button("🚀 Iniciar Treinamento da Rede Neural", use_container_width=True):
-            with st.spinner(f"Construindo e treinando a rede neural MLP para {ticker_curto}. Isso leva apenas alguns segundos..."):
+        if st.button("🚀 Iniciar Otimização e Projeção Neural", use_container_width=True):
+            with st.spinner(f"Rodando backtest neural e descobrindo a janela mais precisa para {ticker_curto}. Isso leva apenas alguns segundos..."):
                 try:
                     from sklearn.preprocessing import MinMaxScaler
                     from sklearn.neural_network import MLPRegressor
                     
                     features = ['Mercado', 'Z_Score', '1_DXY', 'NDX']
-                    # CORREÇÃO CRÍTICA: Transforma a coluna 'Data' no index da tabela
+                    
+                    # CORREÇÃO CRÍTICA DO ÍNDICE DE DATA
                     df_lstm = df_plot.set_index('Data')[features].copy().dropna()
                     
                     scaler = MinMaxScaler(feature_range=(0, 1))
                     dados_escalados = scaler.fit_transform(df_lstm.values)
                     
-                    X, y = [], []
-                    for i in range(janela_memoria, len(dados_escalados)):
-                        X.append(dados_escalados[i - janela_memoria:i].flatten())
-                        y.append(dados_escalados[i, 0]) 
+                    # Validação Out-of-Sample: Reserva os últimos 40 dias conhecidos
+                    dias_teste = 40
+                    treino_dados = dados_escalados[:-dias_teste]
+                    teste_dados = dados_escalados[-dias_teste:]
                     
-                    X, y = np.array(X), np.array(y)
+                    opcoes_projecao = [3, 5, 7, 10, 14, 21]
+                    opcoes_memoria = [7, 14, 21, 30]
                     
-                    modelo = MLPRegressor(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42)
+                    melhor_dias = 7
+                    melhor_memoria = 14
+                    maior_precisao_direcional = -1
+                    menor_erro = float('inf')
                     
-                    modelo.fit(X, y)
+                    # --- FASE 1: AUTO-TUNING (BUSCA PELA MELHOR PRECISÃO) ---
+                    for mem in opcoes_memoria:
+                        X_train, y_train = [], []
+                        for i in range(mem, len(treino_dados)):
+                            X_train.append(treino_dados[i - mem:i].flatten())
+                            y_train.append(treino_dados[i, 0])
+                        X_train, y_train = np.array(X_train), np.array(y_train)
+                        
+                        modelo_teste = MLPRegressor(hidden_layer_sizes=(16,), activation='relu', max_iter=200, random_state=42)
+                        modelo_teste.fit(X_train, y_train)
+                        
+                        for proj in opcoes_projecao:
+                            janela_atual = treino_dados[-mem:]
+                            previsoes = []
+                            for _ in range(proj):
+                                entrada = janela_atual.flatten().reshape(1, -1)
+                                pred = modelo_teste.predict(entrada)[0]
+                                previsoes.append(pred)
+                                
+                                novo_passo = np.copy(janela_atual[-1, :])
+                                novo_passo[0] = pred
+                                janela_atual = np.vstack([janela_atual[1:], novo_passo])
+                            
+                            real = teste_dados[:proj, 0]
+                            
+                            # Avaliação de Direção (Subiu ou Desceu em relação ao dia 0?)
+                            tendencia_real = real[-1] - treino_dados[-1, 0]
+                            tendencia_prevista = previsoes[-1] - treino_dados[-1, 0]
+                            acertou_direcao = 1 if (tendencia_real * tendencia_prevista) > 0 else 0
+                            
+                            # Desempate pelo Erro Médio da Curva
+                            erro_rmse = np.sqrt(np.mean((real - previsoes)**2))
+                            
+                            if acertou_direcao > maior_precisao_direcional or (acertou_direcao == maior_precisao_direcional and erro_rmse < menor_erro):
+                                maior_precisao_direcional = acertou_direcao
+                                menor_erro = erro_rmse
+                                melhor_dias = proj
+                                melhor_memoria = mem
                     
-                    ultimos_dados = dados_escalados[-janela_memoria:]
+                    st.success(f"🎯 **Auto-Tuning concluído!** O motor encontrou a precisão direcional máxima cravando a memória em **{melhor_memoria} dias** e a projeção para **{melhor_dias} dias**.")
+
+                    # --- FASE 2: TREINAMENTO FINAL COM TODOS OS DADOS ---
+                    X_final, y_final = [], []
+                    for i in range(melhor_memoria, len(dados_escalados)):
+                        X_final.append(dados_escalados[i - melhor_memoria:i].flatten())
+                        y_final.append(dados_escalados[i, 0])
                     
+                    X_final, y_final = np.array(X_final), np.array(y_final)
+                    
+                    modelo_final = MLPRegressor(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42)
+                    modelo_final.fit(X_final, y_final)
+                    
+                    ultimos_dados = dados_escalados[-melhor_memoria:]
                     previsoes_escaladas = []
                     
-                    for _ in range(dias_projecao):
+                    for _ in range(melhor_dias):
                         entrada_achatada = ultimos_dados.flatten().reshape(1, -1)
-                        prox_preco_esc = modelo.predict(entrada_achatada)[0]
+                        prox_preco_esc = modelo_final.predict(entrada_achatada)[0]
                         previsoes_escaladas.append(prox_preco_esc)
                         
                         novo_passo = np.copy(ultimos_dados[-1, :])
                         novo_passo[0] = prox_preco_esc 
-                        
                         ultimos_dados = np.vstack([ultimos_dados[1:], novo_passo])
                     
-                    matriz_dummy = np.zeros((dias_projecao, len(features)))
+                    matriz_dummy = np.zeros((melhor_dias, len(features)))
                     matriz_dummy[:, 0] = previsoes_escaladas
                     precos_projetados = scaler.inverse_transform(matriz_dummy)[:, 0]
                     
-                    datas_futuras = [df_lstm.index[-1] + timedelta(days=i) for i in range(1, dias_projecao + 1)]
-                    
-                    st.success("✅ Treinamento concluído com sucesso. Projeção gerada.")
+                    # Usa o index resolvido para somar o timedelta tranquilamente
+                    datas_futuras = [df_lstm.index[-1] + timedelta(days=i) for i in range(1, melhor_dias + 1)]
                     
                     fig_ai = go.Figure()
                     corte = -90
@@ -740,13 +786,13 @@ if df_hist is not None and not df_hist.empty:
                     fig_ai.add_trace(go.Scatter(
                         x=[df_lstm.index[-1]] + datas_futuras, 
                         y=[df_lstm['Mercado'].iloc[-1]] + list(precos_projetados), 
-                        name='Projeção MLP Neural', 
+                        name=f'Projeção Otimizada ({melhor_dias}d)', 
                         line=dict(color='#00FA9A', width=3, dash='dash')
                     ))
                     
                     fig_ai.update_layout(
                         template="plotly_dark", 
-                        title=f"Visão do Cérebro Neural para os Próximos {dias_projecao} dias", 
+                        title=f"Visão do Cérebro Neural para os Próximos {melhor_dias} dias", 
                         hovermode="x unified",
                         height=500
                     )
