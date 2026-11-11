@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Segredos do Streamlit (nunca versionar)
+.streamlit/secrets.toml
+
+# Saídas geradas pelo motor_oem.py
+Historico_OEM*.xlsx
+*.html
+
+# Sistema
+.DS_Store
+Thumbs.db
